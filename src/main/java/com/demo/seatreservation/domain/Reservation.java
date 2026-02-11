@@ -17,12 +17,20 @@ import java.time.LocalDateTime;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Builder
 @Entity
-@Table(name = "reservations",
+@Table(
+        name = "reservations",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_resv_show_seat",
+                        columnNames = {"show_id", "seat_id"}
+                )
+        },
         indexes = {
                 @Index(name = "idx_resv_user", columnList = "user_id"),
                 @Index(name = "idx_resv_show", columnList = "show_id"),
                 @Index(name = "idx_resv_seat", columnList = "seat_id")
-        })
+        }
+)
 public class Reservation {
 
     /* 예약 PK */
