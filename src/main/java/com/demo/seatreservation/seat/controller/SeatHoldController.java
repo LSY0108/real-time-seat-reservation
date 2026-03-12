@@ -1,5 +1,7 @@
 package com.demo.seatreservation.seat.controller;
 
+import com.demo.seatreservation.seat.dto.request.SeatHoldCancelRequest;
+import com.demo.seatreservation.seat.dto.response.SeatHoldCancelResponse;
 import jakarta.validation.Valid;
 
 import org.springframework.web.bind.annotation.*;
@@ -25,6 +27,14 @@ public class SeatHoldController {
             @Valid @RequestBody SeatHoldRequest request
     ) {
         return ApiResponse.ok(seatHoldService.hold(seatId, request));
+    }
+
+    @DeleteMapping("/{seatId}/hold")
+    public ApiResponse<SeatHoldCancelResponse> cancelHold(
+            @PathVariable Long seatId,
+            @Valid @RequestBody SeatHoldCancelRequest request
+    ) {
+        return ApiResponse.ok(seatHoldService.cancelHold(seatId, request));
     }
 
 }
