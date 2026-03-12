@@ -2,12 +2,14 @@ package com.demo.seatreservation.seat.controller;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 
 import java.util.concurrent.TimeUnit;
 
 import com.demo.seatreservation.domain.Reservation;
 import com.demo.seatreservation.domain.enums.ReservationStatus;
 import com.demo.seatreservation.repository.ReservationRepository;
+import com.demo.seatreservation.seat.redis.HoldKey;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +36,11 @@ class SeatHoldControllerTest {
     void setUp() {
         reservationRepository.deleteAll();
 
+        // Redis 전체 초기화
+        stringRedisTemplate.getConnectionFactory()
+                .getConnection()
+                .flushAll();
+
         // 테스트용 Seat 데이터가 없다면 1개 생성해서 테스트가 항상 돌아가게 준비
         if (seatRepository.count() == 0) {
             Seat seat = Seat.builder()
@@ -55,7 +62,8 @@ class SeatHoldControllerTest {
         long showId = 1L;
         long userId = 100L;
 
-        String key = "hold:" + showId + ":" + seatId;
+        //String key = "hold:" + showId + ":" + seatId;
+        String key = HoldKey.of(showId, seatId);
         stringRedisTemplate.delete(key);
 
         mockMvc.perform(
@@ -92,7 +100,8 @@ class SeatHoldControllerTest {
         Long seatId = seatRepository.findAll().get(0).getId();
         long showId = 1L;
 
-        String key = "hold:" + showId + ":" + seatId;
+        //String key = "hold:" + showId + ":" + seatId;
+        String key = HoldKey.of(showId, seatId);
         stringRedisTemplate.delete(key);
 
         // 1차 hold (성공)
@@ -123,7 +132,8 @@ class SeatHoldControllerTest {
         Long seatId = seatRepository.findAll().get(0).getId();
         long showId = 1L;
 
-        String key = "hold:" + showId + ":" + seatId;
+        //String key = "hold:" + showId + ":" + seatId;
+        String key = HoldKey.of(showId, seatId);
         stringRedisTemplate.delete(key);
 
         // 1차 hold 성공
@@ -136,7 +146,7 @@ class SeatHoldControllerTest {
 
         // TTL을 테스트용으로 1초로 줄여서 만료시키기
         stringRedisTemplate.expire(key, 1, TimeUnit.SECONDS);
-        Thread.sleep(1200);
+        Thread.sleep(1500);
 
         // 만료 후 다시 hold -> 성공해야 정상
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
@@ -197,5 +207,106 @@ class SeatHoldControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"showId\": 1}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void cancelHold_success_returnsAvailable() throws Exception {
+        // 테스트 목적:
+        // 1) 정상적인 hold 취소 요청 시 200 OK 반환
+        // 2) Redis hold 키가 삭제되는지 확인
+
+        Long seatId = seatRepository.findAll().get(0).getId();
+        long showId = 1L;
+        long userId = 100L;
+
+        //String key = "hold:" + showId + ":" + seatId;
+        String key = HoldKey.of(showId, seatId);
+        stringRedisTemplate.delete(key);
+
+        // 먼저 hold 생성
+        mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"showId": %d, "userId": %d}
+                    """.formatted(showId, userId)))
+                .andExpect(status().isOk());
+
+        // hold 취소 요청
+        mockMvc.perform(delete("/api/seats/{seatId}/hold", seatId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"showId": %d, "userId": %d}
+                    """.formatted(showId, userId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.status").value("AVAILABLE"));
+
+        // Redis key 삭제 확인
+        String owner = stringRedisTemplate.opsForValue().get(key);
+        org.junit.jupiter.api.Assertions.assertNull(owner);
+    }
+
+    @Test
+    void cancelHold_notOwner_returns403() throws Exception {
+        // 테스트 목적:
+        // HOLD를 건 사용자와 다른 userId가 취소하려 하면
+        // 403 NOT_HOLD_OWNER가 발생해야 한다
+
+        Long seatId = seatRepository.findAll().get(0).getId();
+        long showId = 1L;
+
+        //String key = "hold:" + showId + ":" + seatId;
+        String key = HoldKey.of(showId, seatId);
+        stringRedisTemplate.delete(key);
+
+        // user 100이 hold
+        mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"showId": %d, "userId": 100}
+                    """.formatted(showId)))
+                .andExpect(status().isOk());
+
+        // user 200이 취소 시도
+        mockMvc.perform(delete("/api/seats/{seatId}/hold", seatId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"showId": %d, "userId": 200}
+                    """.formatted(showId)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void cancelHold_expired_returns409() throws Exception {
+        // 테스트 목적:
+        // HOLD가 이미 만료되었거나 존재하지 않을 때
+        // 409 HOLD_EXPIRED가 발생해야 한다
+
+        Long seatId = seatRepository.findAll().get(0).getId();
+        long showId = 1L;
+
+        //String key = "hold:" + showId + ":" + seatId;
+        String key = HoldKey.of(showId, seatId);
+        stringRedisTemplate.delete(key);
+
+        // hold 생성
+        mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"showId": %d, "userId": 100}
+                    """.formatted(showId)))
+                .andExpect(status().isOk());
+
+        // TTL 강제 만료
+        stringRedisTemplate.expire(key, 1, TimeUnit.SECONDS);
+        Thread.sleep(1500);
+
+        // 취소 시도
+        mockMvc.perform(delete("/api/seats/{seatId}/hold", seatId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {"showId": %d, "userId": 100}
+                    """.formatted(showId)))
+                .andExpect(status().isConflict());
     }
 }

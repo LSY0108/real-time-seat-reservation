@@ -2,6 +2,8 @@ package com.demo.seatreservation.seat.service;
 
 import java.time.Duration;
 
+import com.demo.seatreservation.seat.dto.request.SeatHoldCancelRequest;
+import com.demo.seatreservation.seat.dto.response.SeatHoldCancelResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,5 +54,31 @@ public class SeatHoldService {
         // 3) TTL 응답
         long expiresInSec = holdRedisRepository.getTtlSec(key);
         return SeatHoldResponse.held(seatId, showId, expiresInSec);
+    }
+
+    @Transactional
+    public SeatHoldCancelResponse cancelHold(Long seatId, SeatHoldCancelRequest request) {
+
+        Long showId = request.getShowId();
+        Long userId = request.getUserId();
+
+        String key = HoldKey.of(showId, seatId);
+
+        // 1. hold 존재 확인
+        String owner = holdRedisRepository.getOwner(key);
+
+        if (owner == null) {
+            throw new BusinessException(ErrorCode.HOLD_EXPIRED);
+        }
+
+        // 2. owner 확인
+        if (!owner.equals(String.valueOf(userId))) {
+            throw new BusinessException(ErrorCode.NOT_HOLD_OWNER);
+        }
+
+        // 3. key 삭제
+        holdRedisRepository.delete(key);
+
+        return SeatHoldCancelResponse.available(seatId, showId);
     }
 }
