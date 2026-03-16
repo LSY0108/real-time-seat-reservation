@@ -1,5 +1,7 @@
 package com.demo.seatreservation.controller;
 
+import com.demo.seatreservation.global.exception.BusinessException;
+import com.demo.seatreservation.global.exception.ErrorCode;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -18,8 +20,8 @@ public class HealthController {
 
     @GetMapping("/test-error")
     public void testError() {
-        throw new com.demo.seatreservation.exception.BusinessException(
-                com.demo.seatreservation.exception.ErrorCode.SEAT_NOT_FOUND
+        throw new BusinessException(
+                ErrorCode.SEAT_NOT_FOUND
         );
     }
 }
