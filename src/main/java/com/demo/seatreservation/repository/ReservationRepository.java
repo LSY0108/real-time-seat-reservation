@@ -13,9 +13,7 @@ import java.util.List;
 public interface ReservationRepository extends JpaRepository<Reservation, Long> {
 
     /**
-     * 특정 공연(showId) + 좌석(seatId)에
-     * 이미 RESERVED 상태의 예약이 있는지 확인
-     *
+     * 특정 공연(showId) + 좌석(seatId)에 RESERVED 예약 존재 여부 확인
      * → ALREADY_RESERVED 판단용
      */
     boolean existsByShowIdAndSeatIdAndStatus(
@@ -26,8 +24,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
 
     /**
      * 특정 공연(showId)에서 RESERVED 상태인 좌석 ID 목록 조회
-     *
-     * → 좌석 조회 시 RESERVED 상태 계산용
+     * → 좌석 조회 API에서 좌석의 RESERVED 상태를 판단하기 위해 사용
      */
     @Query("""
         select r.seatId
@@ -36,4 +33,16 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
           and r.status = :status
     """)
     List<Long> findSeatIdsByShowIdAndStatus(Long showId, ReservationStatus status);
+
+    /**
+     * 특정 사용자의 상태별 예약 조회
+     * → 내 예약 조회 (status 필터)
+     */
+    List<Reservation> findByUserIdAndStatus(Long userId, ReservationStatus status);
+
+    /**
+     * 특정 사용자의 모든 예약 조회
+     * → 내 예약 조회 기본 (예약 확정, 예약 취소 둘 다 나옴)
+     */
+    List<Reservation> findByUserId(Long userId);
 }
