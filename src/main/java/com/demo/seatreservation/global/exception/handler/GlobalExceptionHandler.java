@@ -7,9 +7,11 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -51,6 +53,42 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 필수 RequestParam 누락 처리
+     *
+     * - ex) userId 누락
+     * - 400 VALIDATION_ERROR 반환
+     */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingParam(
+            MissingServletRequestParameterException e,
+            HttpServletRequest request
+    ) {
+        ErrorCode code = ErrorCode.VALIDATION_ERROR;
+
+        return ResponseEntity
+                .status(code.httpStatus())
+                .body(ErrorResponse.of(code.name(), code.message(), request.getRequestURI()));
+    }
+
+    /**
+     * RequestParam 타입 불일치 처리
+     *
+     * - ex) userId=abc (Long 타입 불일치)
+     * - 400 VALIDATION_ERROR 반환
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(
+            MethodArgumentTypeMismatchException e,
+            HttpServletRequest request
+    ) {
+        ErrorCode code = ErrorCode.VALIDATION_ERROR;
+
+        return ResponseEntity
+                .status(code.httpStatus())
+                .body(ErrorResponse.of(code.name(), code.message(), request.getRequestURI()));
+    }
+
+    /**
      * DB 제약 조건 위반 처리
      *
      * - UNIQUE 제약 충돌 시 발생
@@ -89,4 +127,6 @@ public class GlobalExceptionHandler {
                 .status(500)
                 .body(ErrorResponse.of("INTERNAL_SERVER_ERROR", "서버 오류", request.getRequestURI()));
     }
+
+
 }
