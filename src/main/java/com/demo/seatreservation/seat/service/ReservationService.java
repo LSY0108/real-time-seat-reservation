@@ -6,6 +6,7 @@ import com.demo.seatreservation.domain.Reservation;
 import com.demo.seatreservation.domain.enums.ReservationStatus;
 import com.demo.seatreservation.repository.ReservationRepository;
 import com.demo.seatreservation.seat.dto.request.ReservationConfirmRequest;
+import com.demo.seatreservation.seat.dto.response.ReservationCancelResponse;
 import com.demo.seatreservation.seat.dto.response.ReservationConfirmResponse;
 import com.demo.seatreservation.seat.redis.HoldKey;
 import com.demo.seatreservation.seat.redis.HoldRedisRepository;
@@ -65,10 +66,41 @@ public class ReservationService {
         // 4. Redis HOLD 삭제
         holdRedisRepository.delete(holdKey);
 
+        String userHoldKey = "hold:user:" + showId + ":" + userId;
+        holdRedisRepository.removeUserHold(userHoldKey, seatId);
+
         return ReservationConfirmResponse.builder()
                 .seatId(seatId)
                 .showId(showId)
                 .status(ReservationStatus.RESERVED)
+                .build();
+    }
+
+    @Transactional
+    public ReservationCancelResponse cancel(Long reservationId, Long userId) {
+
+        // 1. 예약 조회
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        // 2. 소유자 확인
+        if (!reservation.getUserId().equals(userId)) {
+            throw new BusinessException(ErrorCode.NOT_RESERVATION_OWNER);
+        }
+
+        // 3. 이미 취소된 경우
+        if (reservation.getStatus() == ReservationStatus.CANCELED) {
+            throw new BusinessException(ErrorCode.ALREADY_CANCELED);
+        }
+
+        // 4. 예약 취소 (도메인 메서드 사용)
+        reservation.cancel();
+
+        return ReservationCancelResponse.builder()
+                .reservationId(reservation.getId())
+                .seatId(reservation.getSeatId())
+                .showId(reservation.getShowId())
+                .status(reservation.getStatus())
                 .build();
     }
 }

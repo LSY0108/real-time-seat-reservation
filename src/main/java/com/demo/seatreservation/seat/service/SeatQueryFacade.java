@@ -33,7 +33,7 @@ public class SeatQueryFacade {
 
     @Transactional(readOnly = true)
     public List<SeatQueryResponse> getSeats(Long showId) {
-        List<Seat> seats = seatRepository.findAll();
+        List<Seat> seats = seatRepository.findByShowId(showId);
 
         Set<Long> reservedSeatIds = Set.copyOf(
                 reservationRepository.findSeatIdsByShowIdAndStatus(showId, ReservationStatus.RESERVED)

@@ -29,7 +29,8 @@ public enum ErrorCode {
     ALREADY_CANCELED(HttpStatus.CONFLICT, "이미 취소됨"),
     EMAIL_DUPLICATED(HttpStatus.CONFLICT, "이메일 중복"),
     SEAT_DUPLICATED(HttpStatus.CONFLICT, "동일 좌석(구역/행/번호) 중복"),
-    SEAT_RESERVED_CANNOT_DELETE(HttpStatus.CONFLICT, "예약 확정 좌석 삭제 불가");
+    SEAT_RESERVED_CANNOT_DELETE(HttpStatus.CONFLICT, "예약 확정 좌석 삭제 불가"),
+    HOLD_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "좌석은 최대 4개까지 선택 가능");
 
     private final HttpStatus httpStatus;
     private final String message;
