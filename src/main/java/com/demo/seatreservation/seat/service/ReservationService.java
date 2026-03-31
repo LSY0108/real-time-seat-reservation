@@ -66,6 +66,9 @@ public class ReservationService {
         // 4. Redis HOLD 삭제
         holdRedisRepository.delete(holdKey);
 
+        String userHoldKey = "hold:user:" + showId + ":" + userId;
+        holdRedisRepository.removeUserHold(userHoldKey, seatId);
+
         return ReservationConfirmResponse.builder()
                 .seatId(seatId)
                 .showId(showId)
