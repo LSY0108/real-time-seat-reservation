@@ -34,6 +34,7 @@ class ReservationQueryControllerTest {
         // 좌석 2개 생성 (UNIQUE 충돌 방지)
         seatRepository.save(
                 Seat.builder()
+                        .showId(1L)
                         .zone("A")
                         .row(1)
                         .number(1)
@@ -42,6 +43,7 @@ class ReservationQueryControllerTest {
 
         seatRepository.save(
                 Seat.builder()
+                        .showId(1L)
                         .zone("A")
                         .row(1)
                         .number(2)
