@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
 @Table(name = "seats",
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_seats_zone_row_number",
-                columnNames = {"zone", "row_num", "seat_number"}
+                columnNames = {"show_id", "zone", "row_num", "seat_number"}
         ))
 public class Seat {
 
@@ -27,6 +27,10 @@ public class Seat {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /* 공연 ID */
+    @Column(nullable = false)
+    private Long showId;
 
     /* 구역 (예: A, B, VIP) */
     @Column(nullable = false, length = 10)
@@ -43,6 +47,7 @@ public class Seat {
     /* 생성 시간 */
     @Column(nullable = false)
     private LocalDateTime createdAt;
+
 
     /**
      * DB insert 직전 자동 실행
