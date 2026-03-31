@@ -3,6 +3,7 @@ package com.demo.seatreservation.repository;
 import com.demo.seatreservation.domain.Seat;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -13,5 +14,5 @@ import java.util.Optional;
  */
 public interface SeatRepository extends JpaRepository<Seat, Long> {
 
-    Optional<Seat> findByZoneAndRowAndNumber(String zone, Integer row, Integer number);
+    List<Seat> findByShowId(Long showId);
 }

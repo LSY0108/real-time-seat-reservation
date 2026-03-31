@@ -4,7 +4,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
 
 import com.demo.seatreservation.domain.Reservation;
 import com.demo.seatreservation.domain.enums.ReservationStatus;
@@ -35,21 +37,31 @@ class SeatHoldControllerTest {
     @BeforeEach
     void setUp() {
         reservationRepository.deleteAll();
+        seatRepository.deleteAll();
 
         // Redis 전체 초기화
         stringRedisTemplate.getConnectionFactory()
                 .getConnection()
                 .flushAll();
+    }
 
-        // 테스트용 Seat 데이터가 없다면 1개 생성해서 테스트가 항상 돌아가게 준비
-        if (seatRepository.count() == 0) {
-            Seat seat = Seat.builder()
-                    .zone("A")
-                    .row(1)
-                    .number(1)
-                    .build();
-            seatRepository.save(seat);
-        }
+    // 공통 좌석 생성
+    private Seat createSeat(Long showId, int number) {
+        return seatRepository.save(
+                Seat.builder()
+                        .showId(showId)
+                        .zone("A")
+                        .row(1)
+                        .number(number)
+                        .build()
+        );
+    }
+
+    // 여러 좌석 생성 + 순서 보장
+    private List<Seat> createSeats(Long showId, int count) {
+        return IntStream.rangeClosed(1, count)
+                .mapToObj(i -> createSeat(showId, i))
+                .toList();
     }
 
     @Test
@@ -58,13 +70,12 @@ class SeatHoldControllerTest {
         // 1) hold 요청이 성공(200)하는지
         // 2) 응답 JSON이 성공 형태로 내려오는지
         // 3) Redis에 hold 키가 생성되고 TTL이 설정되는지(선점이 실제로 걸렸는지)
-        Long seatId = seatRepository.findAll().get(0).getId();
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
         long showId = 1L;
         long userId = 100L;
 
-        //String key = "hold:" + showId + ":" + seatId;
         String key = HoldKey.of(showId, seatId);
-        stringRedisTemplate.delete(key);
 
         mockMvc.perform(
                         post("/api/seats/{seatId}/hold", seatId)
@@ -97,12 +108,9 @@ class SeatHoldControllerTest {
         // 테스트 목적:
         // 이미 선점된 좌석을 다른 사용자가 다시 hold하려고 하면
         // 409 Conflict로 막히는지(= SEAT_ALREADY_HELD 케이스)
-        Long seatId = seatRepository.findAll().get(0).getId();
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
         long showId = 1L;
-
-        //String key = "hold:" + showId + ":" + seatId;
-        String key = HoldKey.of(showId, seatId);
-        stringRedisTemplate.delete(key);
 
         // 1차 hold (성공)
         mockMvc.perform(
@@ -129,12 +137,11 @@ class SeatHoldControllerTest {
         // 테스트 목적:
         // TTL이 만료되면 선점 키가 사라지고
         // 같은 좌석을 다시 hold 할 수 있어야 한다(재선점 가능)
-        Long seatId = seatRepository.findAll().get(0).getId();
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
         long showId = 1L;
 
-        //String key = "hold:" + showId + ":" + seatId;
         String key = HoldKey.of(showId, seatId);
-        stringRedisTemplate.delete(key);
 
         // 1차 hold 성공
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
@@ -163,7 +170,8 @@ class SeatHoldControllerTest {
         // 테스트 목적:
         // DB에 이미 RESERVED 상태의 예약이 있으면
         // hold 요청을 거절해야 한다(= ALREADY_RESERVED 케이스)
-        Long seatId = seatRepository.findAll().get(0).getId();
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
         long showId = 1L;
 
         // 1. DB에 RESERVED 예약 데이터 미리 넣기
@@ -189,7 +197,8 @@ class SeatHoldControllerTest {
     void hold_missingShowId_returns400() throws Exception {
         // 테스트 목적:
         // showId는 필수(@NotNull)라서 누락되면 400 Bad Request가 나와야 정상
-        Long seatId = seatRepository.findAll().get(0).getId();
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
 
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -201,7 +210,8 @@ class SeatHoldControllerTest {
     void hold_missingUserId_returns400() throws Exception {
         // 테스트 목적:
         // userId는 필수(@NotNull)라서 누락되면 400 Bad Request가 나와야 정상
-        Long seatId = seatRepository.findAll().get(0).getId();
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
 
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -215,13 +225,12 @@ class SeatHoldControllerTest {
         // 1) 정상적인 hold 취소 요청 시 200 OK 반환
         // 2) Redis hold 키가 삭제되는지 확인
 
-        Long seatId = seatRepository.findAll().get(0).getId();
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
         long showId = 1L;
         long userId = 100L;
 
-        //String key = "hold:" + showId + ":" + seatId;
         String key = HoldKey.of(showId, seatId);
-        stringRedisTemplate.delete(key);
 
         // 먼저 hold 생성
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
@@ -252,7 +261,8 @@ class SeatHoldControllerTest {
         // HOLD를 건 사용자와 다른 userId가 취소하려 하면
         // 403 NOT_HOLD_OWNER가 발생해야 한다
 
-        Long seatId = seatRepository.findAll().get(0).getId();
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
         long showId = 1L;
 
         //String key = "hold:" + showId + ":" + seatId;
@@ -282,12 +292,11 @@ class SeatHoldControllerTest {
         // HOLD가 이미 만료되었거나 존재하지 않을 때
         // 409 HOLD_EXPIRED가 발생해야 한다
 
-        Long seatId = seatRepository.findAll().get(0).getId();
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
         long showId = 1L;
 
-        //String key = "hold:" + showId + ":" + seatId;
         String key = HoldKey.of(showId, seatId);
-        stringRedisTemplate.delete(key);
 
         // hold 생성
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
@@ -308,5 +317,85 @@ class SeatHoldControllerTest {
                         {"showId": %d, "userId": 100}
                     """.formatted(showId)))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void hold_exceedsLimit_returns409() throws Exception {
+
+        // 테스트 목적:
+        // 한 사용자가 4개까지는 HOLD 가능하지만
+        // 5번째 HOLD 시도는 409 HOLD_LIMIT_EXCEEDED 발생해야 한다
+
+        long showId = 1L;
+        long userId = 100L;
+
+        List<Seat> seats = createSeats(1L, 5);
+
+        // 1~4번 좌석 HOLD 성공
+        for (int i = 0; i < 4; i++) {
+            Long seatId = seats.get(i).getId();
+
+            mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                        {"showId": %d, "userId": %d}
+                        """.formatted(showId, userId)))
+                    .andExpect(status().isOk());
+        }
+
+        // 5번째 HOLD → 실패해야 정상
+        Long seatId5 = seats.get(4).getId();
+
+        mockMvc.perform(post("/api/seats/{seatId}/hold", seatId5)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                    {"showId": %d, "userId": %d}
+                    """.formatted(showId, userId)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void hold_afterCancel_canHoldAgain() throws Exception {
+
+        // 테스트 목적:
+        // 4개 HOLD 상태에서 하나 cancel 하면
+        // 다시 HOLD가 가능해야 한다
+
+        long showId = 1L;
+        long userId = 100L;
+
+        List<Seat> seats = createSeats(1L, 5);
+
+        // 4개 HOLD
+        for (int i = 0; i < 4; i++) {
+            Long seatId = seats.get(i).getId();
+
+            mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                        {"showId": %d, "userId": %d}
+                        """.formatted(showId, userId)))
+                    .andExpect(status().isOk());
+        }
+
+        // 하나 cancel
+        Long cancelSeatId = seats.get(0).getId();
+
+        mockMvc.perform(delete("/api/seats/{seatId}/hold", cancelSeatId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                    {"showId": %d, "userId": %d}
+                    """.formatted(showId, userId)))
+                .andExpect(status().isOk());
+
+        // 다시 HOLD → 성공해야 정상
+        Long newSeatId = seats.get(4).getId();
+
+        mockMvc.perform(post("/api/seats/{seatId}/hold", newSeatId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                    {"showId": %d, "userId": %d}
+                    """.formatted(showId, userId)))
+                .andExpect(status().isOk());
     }
 }
