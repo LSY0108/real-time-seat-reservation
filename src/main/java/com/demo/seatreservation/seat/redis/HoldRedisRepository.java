@@ -33,4 +33,21 @@ public class HoldRedisRepository {
     public void delete(String key) {
         redisTemplate.delete(key);
     }
+
+    // 사용자 HOLD 개수 조회
+    public Long getUserHoldCount(String userHoldKey) {
+        return redisTemplate.opsForSet().size(userHoldKey);
+    }
+
+    // 사용자 HOLD 추가
+    public void addUserHold(String userHoldKey, Long seatId, Duration ttl) {
+        redisTemplate.opsForSet().add(userHoldKey, String.valueOf(seatId));
+        redisTemplate.expire(userHoldKey, ttl);
+    }
+
+    // 사용자 HOLD 제거
+    public void removeUserHold(String userHoldKey, Long seatId) {
+        redisTemplate.opsForSet().remove(userHoldKey, String.valueOf(seatId));
+    }
+
 }

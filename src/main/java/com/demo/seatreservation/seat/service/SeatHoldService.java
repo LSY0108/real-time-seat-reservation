@@ -43,7 +43,16 @@ public class SeatHoldService {
             throw new BusinessException(ErrorCode.ALREADY_RESERVED);
         }
 
-        // 2) Redis NX + TTL hold
+        // 2) 사용자 HOLD 제한
+        String userHoldKey = "hold:user:" + showId + ":" + userId;
+
+        Long count = holdRedisRepository.getUserHoldCount(userHoldKey);
+
+        if (count != null && count >= 4) {
+            throw new BusinessException(ErrorCode.HOLD_LIMIT_EXCEEDED);
+        }
+
+        // 3) Redis NX + TTL hold
         String key = HoldKey.of(showId, seatId);
         boolean ok = holdRedisRepository.tryHold(key, String.valueOf(userId), HOLD_TTL);
 
@@ -51,7 +60,9 @@ public class SeatHoldService {
             throw new BusinessException(ErrorCode.SEAT_ALREADY_HELD);
         }
 
-        // 3) TTL 응답
+        holdRedisRepository.addUserHold(userHoldKey, seatId, HOLD_TTL);
+
+        // 4) TTL 응답
         long expiresInSec = holdRedisRepository.getTtlSec(key);
         return SeatHoldResponse.held(seatId, showId, expiresInSec);
     }
@@ -63,6 +74,7 @@ public class SeatHoldService {
         Long userId = request.getUserId();
 
         String key = HoldKey.of(showId, seatId);
+        String userHoldKey = "hold:user:" + showId + ":" + userId;
 
         // 1. hold 존재 확인
         String owner = holdRedisRepository.getOwner(key);
@@ -78,6 +90,8 @@ public class SeatHoldService {
 
         // 3. key 삭제
         holdRedisRepository.delete(key);
+
+        holdRedisRepository.removeUserHold(userHoldKey, seatId);
 
         return SeatHoldCancelResponse.available(seatId, showId);
     }
