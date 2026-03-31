@@ -52,18 +52,21 @@ class SeatQueryControllerTest {
 
         // 테스트용 좌석 3개 생성
         seatRepository.save(Seat.builder()
+                .showId(1L)
                 .zone("A")
                 .row(1)
                 .number(1)
                 .build());
 
         seatRepository.save(Seat.builder()
+                .showId(1L)
                 .zone("A")
                 .row(1)
                 .number(2)
                 .build());
 
         seatRepository.save(Seat.builder()
+                .showId(1L)
                 .zone("A")
                 .row(1)
                 .number(3)

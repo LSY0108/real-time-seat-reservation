@@ -46,9 +46,10 @@ class SeatHoldControllerTest {
     }
 
     // 공통 좌석 생성
-    private Seat createSeat(int number) {
+    private Seat createSeat(Long showId, int number) {
         return seatRepository.save(
                 Seat.builder()
+                        .showId(showId)
                         .zone("A")
                         .row(1)
                         .number(number)
@@ -57,9 +58,9 @@ class SeatHoldControllerTest {
     }
 
     // 여러 좌석 생성 + 순서 보장
-    private List<Seat> createSeats(int count) {
+    private List<Seat> createSeats(Long showId, int count) {
         return IntStream.rangeClosed(1, count)
-                .mapToObj(this::createSeat)
+                .mapToObj(i -> createSeat(showId, i))
                 .toList();
     }
 
@@ -69,7 +70,7 @@ class SeatHoldControllerTest {
         // 1) hold 요청이 성공(200)하는지
         // 2) 응답 JSON이 성공 형태로 내려오는지
         // 3) Redis에 hold 키가 생성되고 TTL이 설정되는지(선점이 실제로 걸렸는지)
-        Seat seat = createSeat(1);
+        Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
         long showId = 1L;
         long userId = 100L;
@@ -107,7 +108,7 @@ class SeatHoldControllerTest {
         // 테스트 목적:
         // 이미 선점된 좌석을 다른 사용자가 다시 hold하려고 하면
         // 409 Conflict로 막히는지(= SEAT_ALREADY_HELD 케이스)
-        Seat seat = createSeat(1);
+        Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
         long showId = 1L;
 
@@ -136,7 +137,7 @@ class SeatHoldControllerTest {
         // 테스트 목적:
         // TTL이 만료되면 선점 키가 사라지고
         // 같은 좌석을 다시 hold 할 수 있어야 한다(재선점 가능)
-        Seat seat = createSeat(1);
+        Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
         long showId = 1L;
 
@@ -169,7 +170,7 @@ class SeatHoldControllerTest {
         // 테스트 목적:
         // DB에 이미 RESERVED 상태의 예약이 있으면
         // hold 요청을 거절해야 한다(= ALREADY_RESERVED 케이스)
-        Seat seat = createSeat(1);
+        Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
         long showId = 1L;
 
@@ -196,7 +197,7 @@ class SeatHoldControllerTest {
     void hold_missingShowId_returns400() throws Exception {
         // 테스트 목적:
         // showId는 필수(@NotNull)라서 누락되면 400 Bad Request가 나와야 정상
-        Seat seat = createSeat(1);
+        Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
 
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
@@ -209,7 +210,7 @@ class SeatHoldControllerTest {
     void hold_missingUserId_returns400() throws Exception {
         // 테스트 목적:
         // userId는 필수(@NotNull)라서 누락되면 400 Bad Request가 나와야 정상
-        Seat seat = createSeat(1);
+        Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
 
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
@@ -224,7 +225,7 @@ class SeatHoldControllerTest {
         // 1) 정상적인 hold 취소 요청 시 200 OK 반환
         // 2) Redis hold 키가 삭제되는지 확인
 
-        Seat seat = createSeat(1);
+        Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
         long showId = 1L;
         long userId = 100L;
@@ -260,7 +261,7 @@ class SeatHoldControllerTest {
         // HOLD를 건 사용자와 다른 userId가 취소하려 하면
         // 403 NOT_HOLD_OWNER가 발생해야 한다
 
-        Seat seat = createSeat(1);
+        Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
         long showId = 1L;
 
@@ -291,7 +292,7 @@ class SeatHoldControllerTest {
         // HOLD가 이미 만료되었거나 존재하지 않을 때
         // 409 HOLD_EXPIRED가 발생해야 한다
 
-        Seat seat = createSeat(1);
+        Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
         long showId = 1L;
 
@@ -328,7 +329,7 @@ class SeatHoldControllerTest {
         long showId = 1L;
         long userId = 100L;
 
-        List<Seat> seats = createSeats(5);
+        List<Seat> seats = createSeats(1L, 5);
 
         // 1~4번 좌석 HOLD 성공
         for (int i = 0; i < 4; i++) {
@@ -363,7 +364,7 @@ class SeatHoldControllerTest {
         long showId = 1L;
         long userId = 100L;
 
-        List<Seat> seats = createSeats(5);
+        List<Seat> seats = createSeats(1L, 5);
 
         // 4개 HOLD
         for (int i = 0; i < 4; i++) {
