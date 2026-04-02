@@ -155,7 +155,8 @@ public class ReservationConfirmControllerTest {
 
         // 테스트 목적:
         // 동일 좌석에 대해 예약 확정을 두 번 시도할 경우
-        // 두 번째 요청은 409 ALREADY_RESERVED 에러가 발생해야 한다
+        // 두 번째 요청은 DB 유니크 제약 조건에 의해 409 ALREADY_RESERVED 에러가 발생해야 한다
+        // (사전 exists 체크를 통과하더라도, 최종적으로 DB가 중복을 방어하는지 검증)
 
         Long seatId = seatRepository.findAll().get(0).getId();
         Long showId = 1L;
@@ -191,5 +192,44 @@ public class ReservationConfirmControllerTest {
                         }
                         """.formatted(seatId, showId)))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void confirm_whenAlreadyReservedExists_shouldReturnAlreadyReserved() throws Exception {
+        // 테스트 목적:
+        // 이미 DB에 RESERVED 상태의 예약이 존재하는 경우
+        // confirm 요청 시 save까지 가지 않고
+        // existsBy... 사전 체크에서 바로 중복을 감지하여 실패해야 한다
+        // (비즈니스 로직 레벨에서 중복을 1차적으로 차단하는지 검증)
+
+        Long seatId = seatRepository.findAll().get(0).getId();
+        Long showId = 1L;
+
+        // 1. DB에 이미 RESERVED 예약 존재
+        reservationRepository.save(
+                Reservation.builder()
+                        .seatId(seatId)
+                        .showId(showId)
+                        .userId(999L)
+                        .status(ReservationStatus.RESERVED)
+                        .build()
+        );
+
+        // 2. Redis HOLD는 현재 요청 사용자 것으로 생성
+        String holdKey = HoldKey.of(showId, seatId);
+        redisTemplate.opsForValue().set(holdKey, "100");
+
+        // 3. confirm 요청 -> exists() 에서 바로 ALREADY_RESERVED
+        mockMvc.perform(post("/api/reservations/confirm")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                    {
+                      "seatId": %d,
+                      "showId": %d,
+                      "userId": 100
+                    }
+                    """.formatted(seatId, showId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("ALREADY_RESERVED"));
     }
 }

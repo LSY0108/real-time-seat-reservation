@@ -48,9 +48,18 @@ public class ReservationService {
             throw new BusinessException(ErrorCode.NOT_HOLD_OWNER);
         }
 
-        // 3. DB 예약 저장
+        // 3. DB 예약 중복 확인
+        if (reservationRepository.existsByShowIdAndSeatIdAndStatus(
+                showId,
+                seatId,
+                ReservationStatus.RESERVED
+        )) {
+            throw new BusinessException(ErrorCode.ALREADY_RESERVED);
+        }
+
+        // 4. DB 예약 저장
         try {
-            Reservation reservation = reservationRepository.save(
+            reservationRepository.save(
                     Reservation.builder()
                             .seatId(seatId)
                             .showId(showId)
@@ -63,7 +72,7 @@ public class ReservationService {
             throw new BusinessException(ErrorCode.ALREADY_RESERVED);
         }
 
-        // 4. Redis HOLD 삭제
+        // 5. Redis HOLD 삭제
         holdRedisRepository.delete(holdKey);
 
         String userHoldKey = "hold:user:" + showId + ":" + userId;
