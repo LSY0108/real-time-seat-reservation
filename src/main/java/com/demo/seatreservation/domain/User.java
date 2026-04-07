@@ -36,6 +36,14 @@ public class User {
     @Column(nullable = false)
     private String password;
 
+    /* 사용자 이름 */
+    @Column(nullable = false, length = 50)
+    private String name;
+
+    /* 전화번호 */
+    @Column(nullable = false, length = 20)
+    private String phone;
+
     /* 사용자 권한 (USER / ADMIN) */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
