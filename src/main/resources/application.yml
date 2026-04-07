@@ -20,3 +20,8 @@ spring:
     redis:
       host: localhost
       port: 6379
+
+jwt:
+  secret: your-very-long-secret-key-your-very-long-secret-key
+  access-token-expire-ms: 1800000       # 30분
+  refresh-token-expire-ms: 1209600000   # 14일
