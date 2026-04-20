@@ -15,6 +15,8 @@ import java.util.Date;
 
 /**
  * JWT 생성/파싱/검증 담당 클래스
+ * - Access Token only
+ * - Refresh Token은 opaque token 사용
  */
 @Component
 public class JwtTokenProvider {
@@ -22,11 +24,9 @@ public class JwtTokenProvider {
     @Value("${jwt.secret}")
     private String secretKey;
 
-    @Value("${jwt.access-token-expiration}")
+    @Value("${jwt.access-token-expiration-ms}")
     private long accessTokenExpiration;
 
-    @Value("${jwt.refresh-token-expiration}")
-    private long refreshTokenExpiration;
 
     private SecretKey key;
 
@@ -46,21 +46,6 @@ public class JwtTokenProvider {
                 .claim("userId", user.getId())
                 .claim("email", user.getEmail())
                 .claim("role", user.getRole().name())
-                .claim("sessionId", sessionId)
-                .issuedAt(now)
-                .expiration(expiry)
-                .signWith(key)
-                .compact();
-    }
-
-    // Refresh Token 생성
-    public String generateRefreshToken(Long userId, String sessionId) {
-        Date now = new Date();
-        Date expiry = new Date(now.getTime() + refreshTokenExpiration);
-
-        return Jwts.builder()
-                .subject(String.valueOf(userId))
-                .claim("userId", userId)
                 .claim("sessionId", sessionId)
                 .issuedAt(now)
                 .expiration(expiry)
@@ -124,9 +109,5 @@ public class JwtTokenProvider {
 
     public long getAccessTokenExpiration() {
         return accessTokenExpiration;
-    }
-
-    public long getRefreshTokenExpiration() {
-        return refreshTokenExpiration;
     }
 }
