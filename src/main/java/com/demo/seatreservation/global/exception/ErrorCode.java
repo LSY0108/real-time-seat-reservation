@@ -10,7 +10,6 @@ public enum ErrorCode {
     // 401
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "인증 실패 (Access Token 없음/만료/유효하지 않음)"),
     INVALID_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "Refresh Token 위조 또는 불일치"),
-    EXPIRED_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "Refresh Token 만료"),
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "이메일/비밀번호 불일치"),
 
     // 403
