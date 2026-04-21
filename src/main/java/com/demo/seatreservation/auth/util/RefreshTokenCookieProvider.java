@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class RefreshTokenCookieProvider {
-    @Value("${jwt.refresh-token-expiration}")
-    private long refreshTokenExpiration;
+    @Value("${jwt.refresh-token-expiration-ms}")
+    private long refreshTokenExpirationMs;
 
     // Refresh Token 쿠키 생성
     public ResponseCookie createCookie(String refreshToken) {
@@ -19,7 +19,7 @@ public class RefreshTokenCookieProvider {
                 .secure(true)
                 .sameSite("Strict")
                 .path("/api/auth/refresh")
-                .maxAge(refreshTokenExpiration / 1000)
+                .maxAge(refreshTokenExpirationMs / 1000)
                 .build();
     }
 

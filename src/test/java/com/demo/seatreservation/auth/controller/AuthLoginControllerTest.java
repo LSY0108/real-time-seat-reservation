@@ -209,7 +209,7 @@ public class AuthLoginControllerTest {
 
         // 테스트 목적:
         // 로그인 성공 시 Redis에
-        // refresh:{userId}:{sessionId} = refreshToken 이 저장되는지 확인
+        // refresh:{userId}:{sessionId} = opaque refreshToken 이 저장되는지 확인
 
         User savedUser = saveUser("redis@test.com", "12345678", "홍길동", "010-1111-2222");
 
@@ -333,7 +333,7 @@ public class AuthLoginControllerTest {
     void login_refreshTokenInCookieOnly() throws Exception {
 
         // 테스트 목적:
-        // 로그인 성공 시 refresh token은 body가 아니라
+        // 로그인 성공 시 opaque refresh token은 body가 아니라
         // Set-Cookie 헤더로 내려가야 한다
 
         saveUser("cookie@test.com", "12345678", "홍길동", "010-1111-2222");
