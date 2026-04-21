@@ -231,6 +231,23 @@ public class AuthService {
     }
 
     /**
+     * 현재 세션 로그아웃
+     * - JwtAuthenticationFilter가 검증한 Principal에서 userId / sessionId 수신
+     * - Redis에서 해당 세션 refresh 데이터 전부 삭제
+     */
+    public void logout(Long userId, String sessionId) {
+        String refreshKey = "refresh:" + userId + ":" + sessionId;
+
+        String storedRefreshToken = stringRedisTemplate.opsForValue().get(refreshKey);
+        if (storedRefreshToken != null) {
+            stringRedisTemplate.delete("refresh:token:" + storedRefreshToken);
+        }
+
+        stringRedisTemplate.delete(refreshKey);
+        stringRedisTemplate.opsForSet().remove("refresh:sessions:" + userId, sessionId);
+    }
+
+    /**
      * refresh token 검증 실패 시
      * 해당 세션의 refresh 관련 데이터 삭제
      */
