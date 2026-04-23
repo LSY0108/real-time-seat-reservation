@@ -36,6 +36,7 @@
 
 ```
 refresh:{userId}:{sessionId}    = refreshToken    (TTL 14일)
+refresh:token:{refreshToken}    = userId:sessionId
 refresh:sessions:{userId}       = Set<sessionId>  (전체 세션 목록)
 ```
 
@@ -59,15 +60,16 @@ refresh:sessions:{userId}       = Set<sessionId>  (전체 세션 목록)
 
 ### Refresh (`/api/auth/refresh`)
 1. 쿠키에 refreshToken 없으면 → `UNAUTHORIZED`
-2. Access Token claims에서 `userId`, `sessionId` 추출
-3. Redis에서 `refresh:{userId}:{sessionId}` 조회 — 없으면 `INVALID_REFRESH_TOKEN`
-4. 저장값과 요청값 비교 — 불일치 시 해당 키 삭제 + sessionId Set에서 제거 + `INVALID_REFRESH_TOKEN`
-5. 새 Access Token 발급
-6. 새 Refresh Token 발급 (Rotation)
-7. Redis 저장값 갱신 (기존 토큰 즉시 무효화)
-8. sessionId는 유지
+2. Redis에서 `refresh:token:{refreshToken}` 역조회 — 없으면 `INVALID_REFRESH_TOKEN`
+3. 역조회 결과(`userId:sessionId`)를 파싱
+4. Redis에서 `refresh:{userId}:{sessionId}` 조회
+5. 저장값과 요청값 비교 — 불일치 시 해당 세션 데이터 삭제 + sessionId Set에서 제거 + `INVALID_REFRESH_TOKEN`
+6. 새 Access Token 발급
+7. 새 Refresh Token 발급 (Rotation)
+8. 기존 역조회 키 삭제 후 Redis 저장값 갱신 (기존 토큰 즉시 무효화)
+9. sessionId는 유지
 
-### Logout (`/api/auth/logout`) — 미구현
+### Logout (`/api/auth/logout`) 
 1. Access Token 검증 (유효한 토큰 없으면 401 — 만료 시 먼저 refresh 필요)
 2. claims에서 `userId`, `sessionId` 추출
 3. Redis: `refresh:{userId}:{sessionId}` 삭제
