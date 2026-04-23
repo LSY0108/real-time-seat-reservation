@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Set;
 import java.util.UUID;
 
 import java.security.SecureRandom;
@@ -240,6 +241,28 @@ public class AuthService {
 
         stringRedisTemplate.delete(refreshKey);
         stringRedisTemplate.opsForSet().remove("refresh:sessions:" + userId, sessionId);
+    }
+
+    /**
+     * 전체 세션 로그아웃
+     * - 해당 유저의 모든 세션 refresh 데이터 삭제
+     */
+    public void logoutAll(Long userId) {
+        String sessionSetKey = "refresh:sessions:" + userId;
+
+        Set<String> sessionIds = stringRedisTemplate.opsForSet().members(sessionSetKey);
+        if (sessionIds != null) {
+            for (String sessionId : sessionIds) {
+                String refreshKey = "refresh:" + userId + ":" + sessionId;
+                String storedToken = stringRedisTemplate.opsForValue().get(refreshKey);
+                if (storedToken != null) {
+                    stringRedisTemplate.delete("refresh:token:" + storedToken);
+                }
+                stringRedisTemplate.delete(refreshKey);
+            }
+        }
+
+        stringRedisTemplate.delete(sessionSetKey);
     }
 
     /**
