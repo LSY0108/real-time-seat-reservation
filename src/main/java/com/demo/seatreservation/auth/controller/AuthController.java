@@ -70,6 +70,24 @@ public class AuthController {
     }
 
     /**
+     * 전체 세션 로그아웃
+     *
+     * - JwtAuthenticationFilter가 검증한 Principal에서 userId 추출
+     * - 해당 유저의 모든 세션 refresh 데이터 삭제
+     * - refresh cookie 만료 처리
+     */
+    @PostMapping("/logout-all")
+    public ResponseEntity<ApiResponse<Void>> logoutAll(
+            @AuthenticationPrincipal CustomUserPrincipal principal
+    ) {
+        authService.logoutAll(principal.getUserId());
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, refreshTokenCookieProvider.deleteCookie().toString())
+                .body(ApiResponse.ok(null));
+    }
+
+    /**
      * Access Token 재발급 (Refresh Token Rotation)
      *
      * - refresh token -> HttpOnly 쿠키에서 추출
