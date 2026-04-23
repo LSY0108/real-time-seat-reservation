@@ -40,7 +40,7 @@ public class AuthController {
     public ResponseEntity<ApiResponse<LoginResponse>> login(
             @Valid @RequestBody LoginRequest request
     ) {
-        AuthService.LoginWithRefreshResult result = authService.loginWithRefresh(request);
+        AuthService.LoginWithRefreshResult result = authService.login(request);
 
         return ResponseEntity.ok()
                 .header(

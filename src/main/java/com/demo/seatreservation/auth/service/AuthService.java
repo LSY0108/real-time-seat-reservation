@@ -69,14 +69,9 @@ public class AuthService {
     /**
      * 로그인
      * - access token + refresh token을 한 번에 발급
-     * - refresh token은 body가 아니라 cookie로 내려주기 위해
-     *   내부적으로 loginWithRefresh()를 재사용
+     * - refresh token은 body가 아니라 cookie로 내려주기
      */
-    public LoginResponse login(LoginRequest request) {
-        return loginWithRefresh(request).loginResponse();
-    }
-
-    public LoginWithRefreshResult loginWithRefresh(LoginRequest request) {
+    public LoginWithRefreshResult login(LoginRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS));
 
