@@ -12,7 +12,7 @@
 | POST | `/api/auth/login` | 완료  | 로그인 |
 | POST | `/api/auth/refresh` | 완료  | Access Token 재발급 + Refresh Rotation |
 | POST | `/api/auth/logout` | 완료  | 현재 세션 로그아웃 |
-| POST | `/api/auth/logout-all` | 미구현 | 전체 세션 로그아웃 |
+| POST | `/api/auth/logout-all` | 완료  | 전체 세션 로그아웃 |
 
 ---
 
@@ -80,7 +80,10 @@ refresh:sessions:{userId}       = Set<sessionId>  (전체 세션 목록)
 1. Access Token 검증
 2. claims에서 `userId` 추출
 3. Redis: `refresh:sessions:{userId}` Set에서 모든 sessionId 조회
-4. 각 sessionId에 대해 `refresh:{userId}:{sessionId}` 삭제
+4. 각 sessionId에 대해:
+   - `refresh:{userId}:{sessionId}` 조회 → stored refreshToken 획득
+   - `refresh:token:{refreshToken}` 역조회 키 삭제
+   - `refresh:{userId}:{sessionId}` 삭제
 5. Redis: `refresh:sessions:{userId}` Set 삭제
 6. 응답 쿠키 만료 처리
 
@@ -138,7 +141,10 @@ refresh:sessions:{userId}       = Set<sessionId>  (전체 세션 목록)
 
 **Logout-All (구현 후)**
 - 여러 기기 로그인 후 logout-all 시 모든 refresh token 삭제
+- 각 sessionId에 대응하는 `refresh:token:{refreshToken}` 역조회 키 삭제 확인
 - `refresh:sessions:{userId}` Set 삭제 확인
 - 모든 기기에서 refresh 실패 확인
 - 다른 사용자의 refresh token은 삭제되지 않음
 - logout-all 후 재로그인으로 새 세션 정상 생성 확인
+- Authorization 헤더 없이 logout-all 요청 → 401
+- 유효하지 않은 access token으로 logout-all 요청 → 401
