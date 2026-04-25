@@ -10,7 +10,7 @@
 |--------|------|------|------|
 | POST | `/api/seats/{seatId}/hold` | 필요 (미적용) | HOLD 생성 |
 | DELETE | `/api/seats/{seatId}/hold` | 필요 (미적용) | HOLD 취소 |
-| GET | `/api/shows/{showId}/seats` | 불필요 | 실시간 좌석 상태 조회 |
+| GET | `/api/shows/{showId}/seats` | 불필요 (GET `/api/shows/**` 공개) | 실시간 좌석 상태 조회 |
 | POST | `/api/seats/{seatId}/reservations` | 필요 (미적용) | 예약 확정 |
 | GET | `/api/users/{userId}/reservations` | 필요 (미적용) | 내 예약 조회 |
 | DELETE | `/api/reservations/{reservationId}` | 필요 (미적용) | 예약 취소 |
