@@ -7,6 +7,7 @@ import com.demo.seatreservation.security.jwt.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -42,9 +43,9 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/auth/signup",
                                 "/api/auth/login",
-                                "/api/auth/refresh",
-                                "/api/shows/**"
+                                "/api/auth/refresh"
                         ).permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/shows/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class);
