@@ -10,10 +10,10 @@
 |--------|------|------|------|
 | POST | `/api/seats/{seatId}/hold` | 필요 (미적용) | HOLD 생성 |
 | DELETE | `/api/seats/{seatId}/hold` | 필요 (미적용) | HOLD 취소 |
-| GET | `/api/shows/{showId}/seats` | 불필요 (GET `/api/shows/**` 공개) | 실시간 좌석 상태 조회 |
-| POST | `/api/seats/{seatId}/reservations` | 필요 (미적용) | 예약 확정 |
-| GET | `/api/users/{userId}/reservations` | 필요 (미적용) | 내 예약 조회 |
-| DELETE | `/api/reservations/{reservationId}` | 필요 (미적용) | 예약 취소 |
+| GET | `/api/seats` | 불필요 (GET `/api/seats` 공개) | 실시간 좌석 상태 조회 (`?showId=` 쿼리 파라미터) |
+| POST | `/api/reservations/confirm` | 필요 (미적용) | 예약 확정 |
+| GET | `/api/me/reservations` | 필요 (미적용) | 내 예약 조회 (`?userId=` 쿼리 파라미터) |
+| POST | `/api/reservations/{reservationId}/cancel` | 필요 (미적용) | 예약 취소 |
 
 > JWT 필터 적용 후 userId 직접 전달 방식 제거 예정 (`?userId=`, RequestBody userId 모두 제거)
 
