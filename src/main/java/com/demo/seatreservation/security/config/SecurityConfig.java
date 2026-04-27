@@ -45,7 +45,7 @@ public class SecurityConfig {
                                 "/api/auth/login",
                                 "/api/auth/refresh"
                         ).permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/shows/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/shows/**", "/api/seats", "/", "/health").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class);
