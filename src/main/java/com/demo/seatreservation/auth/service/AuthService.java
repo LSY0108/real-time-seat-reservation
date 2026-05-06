@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Set;
 import java.util.UUID;
 
 import java.security.SecureRandom;
@@ -69,14 +70,9 @@ public class AuthService {
     /**
      * 로그인
      * - access token + refresh token을 한 번에 발급
-     * - refresh token은 body가 아니라 cookie로 내려주기 위해
-     *   내부적으로 loginWithRefresh()를 재사용
+     * - refresh token은 body가 아니라 cookie로 내려주기
      */
-    public LoginResponse login(LoginRequest request) {
-        return loginWithRefresh(request).loginResponse();
-    }
-
-    public LoginWithRefreshResult loginWithRefresh(LoginRequest request) {
+    public LoginWithRefreshResult login(LoginRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS));
 
@@ -245,6 +241,28 @@ public class AuthService {
 
         stringRedisTemplate.delete(refreshKey);
         stringRedisTemplate.opsForSet().remove("refresh:sessions:" + userId, sessionId);
+    }
+
+    /**
+     * 전체 세션 로그아웃
+     * - 해당 유저의 모든 세션 refresh 데이터 삭제
+     */
+    public void logoutAll(Long userId) {
+        String sessionSetKey = "refresh:sessions:" + userId;
+
+        Set<String> sessionIds = stringRedisTemplate.opsForSet().members(sessionSetKey);
+        if (sessionIds != null) {
+            for (String sessionId : sessionIds) {
+                String refreshKey = "refresh:" + userId + ":" + sessionId;
+                String storedToken = stringRedisTemplate.opsForValue().get(refreshKey);
+                if (storedToken != null) {
+                    stringRedisTemplate.delete("refresh:token:" + storedToken);
+                }
+                stringRedisTemplate.delete(refreshKey);
+            }
+        }
+
+        stringRedisTemplate.delete(sessionSetKey);
     }
 
     /**

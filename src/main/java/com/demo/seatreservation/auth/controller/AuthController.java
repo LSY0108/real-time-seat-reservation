@@ -40,7 +40,7 @@ public class AuthController {
     public ResponseEntity<ApiResponse<LoginResponse>> login(
             @Valid @RequestBody LoginRequest request
     ) {
-        AuthService.LoginWithRefreshResult result = authService.loginWithRefresh(request);
+        AuthService.LoginWithRefreshResult result = authService.login(request);
 
         return ResponseEntity.ok()
                 .header(
@@ -63,6 +63,24 @@ public class AuthController {
             @AuthenticationPrincipal CustomUserPrincipal principal
     ) {
         authService.logout(principal.getUserId(), principal.getSessionId());
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, refreshTokenCookieProvider.deleteCookie().toString())
+                .body(ApiResponse.ok(null));
+    }
+
+    /**
+     * 전체 세션 로그아웃
+     *
+     * - JwtAuthenticationFilter가 검증한 Principal에서 userId 추출
+     * - 해당 유저의 모든 세션 refresh 데이터 삭제
+     * - refresh cookie 만료 처리
+     */
+    @PostMapping("/logout-all")
+    public ResponseEntity<ApiResponse<Void>> logoutAll(
+            @AuthenticationPrincipal CustomUserPrincipal principal
+    ) {
+        authService.logoutAll(principal.getUserId());
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, refreshTokenCookieProvider.deleteCookie().toString())

@@ -7,16 +7,9 @@ public class SeatHoldCancelRequest {
     @NotNull
     private Long showId;
 
-    @NotNull
-    private Long userId;
-
     public SeatHoldCancelRequest() {}
 
     public Long getShowId() {
         return showId;
-    }
-
-    public Long getUserId() {
-        return userId;
     }
 }
