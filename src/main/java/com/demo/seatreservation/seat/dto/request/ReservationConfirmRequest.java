@@ -11,7 +11,4 @@ public class ReservationConfirmRequest {
 
     @NotNull
     private Long showId;
-
-    @NotNull
-    private Long userId;
 }

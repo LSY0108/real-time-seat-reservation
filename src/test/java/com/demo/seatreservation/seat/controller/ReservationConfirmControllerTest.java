@@ -2,9 +2,12 @@ package com.demo.seatreservation.seat.controller;
 
 import com.demo.seatreservation.domain.Reservation;
 import com.demo.seatreservation.domain.Seat;
+import com.demo.seatreservation.domain.User;
 import com.demo.seatreservation.domain.enums.ReservationStatus;
+import com.demo.seatreservation.domain.enums.Role;
 import com.demo.seatreservation.repository.ReservationRepository;
 import com.demo.seatreservation.repository.SeatRepository;
+import com.demo.seatreservation.repository.UserRepository;
 import com.demo.seatreservation.seat.redis.HoldKey;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,8 +16,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -23,33 +32,24 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 public class ReservationConfirmControllerTest {
 
-    @Autowired
-    MockMvc mockMvc;
-
-    @Autowired
-    SeatRepository seatRepository;
-
-    @Autowired
-    ReservationRepository reservationRepository;
-
-    @Autowired
-    StringRedisTemplate redisTemplate;
+    @Autowired MockMvc mockMvc;
+    @Autowired SeatRepository seatRepository;
+    @Autowired ReservationRepository reservationRepository;
+    @Autowired StringRedisTemplate redisTemplate;
+    @Autowired UserRepository userRepository;
+    @Autowired PasswordEncoder passwordEncoder;
+    @Autowired ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
-
-        // 테스트 시작 전 DB 예약 데이터 초기화
         reservationRepository.deleteAll();
+        seatRepository.deleteAll();
+        userRepository.deleteAll();
 
-        // Redis 전체 초기화 (HOLD 데이터 제거)
         redisTemplate.getConnectionFactory()
                 .getConnection()
                 .flushAll();
 
-        // Seat 데이터 초기화
-        seatRepository.deleteAll();
-
-        // 테스트용 좌석 1개 생성
         seatRepository.save(
                 Seat.builder()
                         .showId(1L)
@@ -60,38 +60,64 @@ public class ReservationConfirmControllerTest {
         );
     }
 
+    private User saveUser(String email) {
+        return userRepository.save(
+                User.builder()
+                        .email(email)
+                        .password(passwordEncoder.encode("password1!"))
+                        .name("테스터")
+                        .phone("010-0000-0000")
+                        .role(Role.USER)
+                        .build()
+        );
+    }
+
+    private String loginAndGetToken(String email) throws Exception {
+        MvcResult result = mockMvc.perform(
+                        post("/api/auth/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"email": "%s", "password": "password1!"}
+                                        """.formatted(email))
+                )
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode root = objectMapper.readTree(result.getResponse().getContentAsString());
+        return root.get("data").get("accessToken").asText();
+    }
+
     @Test
     void confirm_success_shouldReserveSeat() throws Exception {
-
         // 테스트 목적:
         // 1) 정상적인 HOLD 상태에서 예약 확정 요청 시 200 OK 반환
         // 2) DB에 RESERVED 상태의 예약이 생성되는지 확인
         // 3) Redis HOLD 키가 삭제되는지 확인
+        User user = saveUser("confirm@test.com");
+        String token = loginAndGetToken("confirm@test.com");
 
         Long seatId = seatRepository.findAll().get(0).getId();
         Long showId = 1L;
 
-        // Redis HOLD 생성 (사용자 100이 좌석 선점)
+        // Redis HOLD 생성 (실제 user ID로 선점)
         String key = HoldKey.of(showId, seatId);
-        redisTemplate.opsForValue().set(key, "100");
+        redisTemplate.opsForValue().set(key, String.valueOf(user.getId()));
 
-        // 예약 확정 요청
         mockMvc.perform(post("/api/reservations/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                        {
-                          "seatId": %d,
-                          "showId": %d,
-                          "userId": 100
-                        }
-                        """.formatted(seatId, showId)))
+                                {
+                                  "seatId": %d,
+                                  "showId": %d
+                                }
+                                """.formatted(seatId, showId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.status").value("RESERVED"));
 
         // DB에 예약이 생성되었는지 확인
         Reservation reservation = reservationRepository.findAll().get(0);
-
         org.junit.jupiter.api.Assertions.assertEquals(ReservationStatus.RESERVED, reservation.getStatus());
 
         // Redis HOLD 삭제 확인
@@ -99,64 +125,64 @@ public class ReservationConfirmControllerTest {
         org.junit.jupiter.api.Assertions.assertNull(owner);
     }
 
-
     @Test
     void confirm_withoutHold_shouldReturn409() throws Exception {
-
         // 테스트 목적:
         // Redis에 HOLD 키가 존재하지 않는 상태에서
         // 예약 확정 요청 시 409 HOLD_EXPIRED 에러가 발생해야 한다
+        saveUser("confirm@test.com");
+        String token = loginAndGetToken("confirm@test.com");
 
         Long seatId = seatRepository.findAll().get(0).getId();
 
         mockMvc.perform(post("/api/reservations/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                        {
-                          "seatId": %d,
-                          "showId": 1,
-                          "userId": 100
-                        }
-                        """.formatted(seatId)))
+                                {
+                                  "seatId": %d,
+                                  "showId": 1
+                                }
+                                """.formatted(seatId)))
                 .andExpect(status().isConflict());
     }
 
-
     @Test
     void confirm_notOwner_shouldReturn403() throws Exception {
-
         // 테스트 목적:
         // HOLD를 건 사용자와 다른 userId가 예약 확정을 시도할 경우
         // 403 NOT_HOLD_OWNER 에러가 발생해야 한다
+        User user1 = saveUser("user1@test.com");
+        User user2 = saveUser("user2@test.com");
+        String token1 = loginAndGetToken("user1@test.com");
 
         Long seatId = seatRepository.findAll().get(0).getId();
         Long showId = 1L;
 
-        // Redis HOLD 생성 (user 200이 선점)
+        // user2가 선점한 HOLD
         String key = HoldKey.of(showId, seatId);
-        redisTemplate.opsForValue().set(key, "200");
+        redisTemplate.opsForValue().set(key, String.valueOf(user2.getId()));
 
-        // user 100이 예약 확정 시도
+        // user1이 예약 확정 시도
         mockMvc.perform(post("/api/reservations/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                        {
-                          "seatId": %d,
-                          "showId": %d,
-                          "userId": 100
-                        }
-                        """.formatted(seatId, showId)))
+                                {
+                                  "seatId": %d,
+                                  "showId": %d
+                                }
+                                """.formatted(seatId, showId)))
                 .andExpect(status().isForbidden());
     }
 
-
     @Test
     void confirm_twice_shouldReturnAlreadyReserved() throws Exception {
-
         // 테스트 목적:
         // 동일 좌석에 대해 예약 확정을 두 번 시도할 경우
-        // 두 번째 요청은 DB 유니크 제약 조건에 의해 409 ALREADY_RESERVED 에러가 발생해야 한다
-        // (사전 exists 체크를 통과하더라도, 최종적으로 DB가 중복을 방어하는지 검증)
+        // 두 번째 요청은 409 ALREADY_RESERVED 에러가 발생해야 한다
+        User user = saveUser("confirm@test.com");
+        String token = loginAndGetToken("confirm@test.com");
 
         Long seatId = seatRepository.findAll().get(0).getId();
         Long showId = 1L;
@@ -164,33 +190,33 @@ public class ReservationConfirmControllerTest {
         String key = HoldKey.of(showId, seatId);
 
         // 첫 번째 HOLD 생성
-        redisTemplate.opsForValue().set(key, "100");
+        redisTemplate.opsForValue().set(key, String.valueOf(user.getId()));
 
         // 첫 번째 confirm (성공)
         mockMvc.perform(post("/api/reservations/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                        {
-                          "seatId": %d,
-                          "showId": %d,
-                          "userId": 100
-                        }
-                        """.formatted(seatId, showId)))
+                                {
+                                  "seatId": %d,
+                                  "showId": %d
+                                }
+                                """.formatted(seatId, showId)))
                 .andExpect(status().isOk());
 
         // 두 번째 confirm을 위해 다시 HOLD 생성
-        redisTemplate.opsForValue().set(key, "100");
+        redisTemplate.opsForValue().set(key, String.valueOf(user.getId()));
 
         // 두 번째 confirm (이미 예약됨 → 실패)
         mockMvc.perform(post("/api/reservations/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                        {
-                          "seatId": %d,
-                          "showId": %d,
-                          "userId": 100
-                        }
-                        """.formatted(seatId, showId)))
+                                {
+                                  "seatId": %d,
+                                  "showId": %d
+                                }
+                                """.formatted(seatId, showId)))
                 .andExpect(status().isConflict());
     }
 
@@ -198,14 +224,14 @@ public class ReservationConfirmControllerTest {
     void confirm_whenAlreadyReservedExists_shouldReturnAlreadyReserved() throws Exception {
         // 테스트 목적:
         // 이미 DB에 RESERVED 상태의 예약이 존재하는 경우
-        // confirm 요청 시 save까지 가지 않고
         // existsBy... 사전 체크에서 바로 중복을 감지하여 실패해야 한다
-        // (비즈니스 로직 레벨에서 중복을 1차적으로 차단하는지 검증)
+        User user = saveUser("confirm@test.com");
+        String token = loginAndGetToken("confirm@test.com");
 
         Long seatId = seatRepository.findAll().get(0).getId();
         Long showId = 1L;
 
-        // 1. DB에 이미 RESERVED 예약 존재
+        // DB에 이미 RESERVED 예약 존재
         reservationRepository.save(
                 Reservation.builder()
                         .seatId(seatId)
@@ -215,21 +241,37 @@ public class ReservationConfirmControllerTest {
                         .build()
         );
 
-        // 2. Redis HOLD는 현재 요청 사용자 것으로 생성
+        // Redis HOLD는 현재 요청 사용자 것으로 생성
         String holdKey = HoldKey.of(showId, seatId);
-        redisTemplate.opsForValue().set(holdKey, "100");
+        redisTemplate.opsForValue().set(holdKey, String.valueOf(user.getId()));
 
-        // 3. confirm 요청 -> exists() 에서 바로 ALREADY_RESERVED
+        mockMvc.perform(post("/api/reservations/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "seatId": %d,
+                                  "showId": %d
+                                }
+                                """.formatted(seatId, showId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("ALREADY_RESERVED"));
+    }
+
+    @Test
+    void confirm_noAuthToken_returns401() throws Exception {
+        // 테스트 목적:
+        // Authorization 헤더 없이 confirm 요청 시 401이 발생해야 한다
+        Long seatId = seatRepository.findAll().get(0).getId();
+
         mockMvc.perform(post("/api/reservations/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                    {
-                      "seatId": %d,
-                      "showId": %d,
-                      "userId": 100
-                    }
-                    """.formatted(seatId, showId)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.errorCode").value("ALREADY_RESERVED"));
+                                {
+                                  "seatId": %d,
+                                  "showId": 1
+                                }
+                                """.formatted(seatId)))
+                .andExpect(status().isUnauthorized());
     }
 }

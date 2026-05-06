@@ -3,6 +3,8 @@ package com.demo.seatreservation.seat.controller;
 import com.demo.seatreservation.common.ApiResponse;
 import com.demo.seatreservation.seat.dto.response.ReservationCancelResponse;
 import com.demo.seatreservation.seat.service.ReservationService;
+import com.demo.seatreservation.security.principal.CustomUserPrincipal;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -15,7 +17,10 @@ public class ReservationCancelController {
     }
 
     @PostMapping("/{reservationId}/cancel")
-    public ApiResponse<ReservationCancelResponse> cancel(@PathVariable Long reservationId, @RequestParam Long userId) {
-        return ApiResponse.ok(reservationService.cancel(reservationId, userId));
+    public ApiResponse<ReservationCancelResponse> cancel(
+            @PathVariable Long reservationId,
+            @AuthenticationPrincipal CustomUserPrincipal principal
+    ) {
+        return ApiResponse.ok(reservationService.cancel(reservationId, principal.getUserId()));
     }
 }
