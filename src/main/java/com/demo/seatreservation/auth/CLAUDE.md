@@ -76,7 +76,7 @@ refresh:sessions:{userId}       = Set<sessionId>  (전체 세션 목록)
 4. Redis: `refresh:sessions:{userId}` Set에서 sessionId 제거
 5. 응답 쿠키 maxAge=0으로 만료 처리
 
-### Logout-All (`/api/auth/logout-all`) — 미구현
+### Logout-All (`/api/auth/logout-all`)
 1. Access Token 검증
 2. claims에서 `userId` 추출
 3. Redis: `refresh:sessions:{userId}` Set에서 모든 sessionId 조회
@@ -132,14 +132,14 @@ refresh:sessions:{userId}       = Set<sessionId>  (전체 세션 목록)
 - Redis 값 불일치 → 해당 세션 삭제 후 401
 - A 기기 logout 후 B 기기 refresh는 여전히 성공
 
-**Logout (구현 후)**
+**Logout**
 - Redis refresh token 삭제 확인
 - `refresh:sessions:{userId}` Set에서 sessionId 제거 확인
 - 다른 기기 refresh token 유지 확인
 - 로그아웃된 세션의 refresh token 재사용 불가
 - 응답 쿠키 만료 처리 확인
 
-**Logout-All (구현 후)**
+**Logout-All**
 - 여러 기기 로그인 후 logout-all 시 모든 refresh token 삭제
 - 각 sessionId에 대응하는 `refresh:token:{refreshToken}` 역조회 키 삭제 확인
 - `refresh:sessions:{userId}` Set 삭제 확인

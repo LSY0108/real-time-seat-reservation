@@ -66,12 +66,12 @@ hold:user:{showId}:{userId}     = Set<seatId>   (hold 개수 추적, TTL 동기�
 
 ### HOLD 취소 (`DELETE /api/seats/{seatId}/hold`)
 1. Redis `hold:{showId}:{seatId}` 조회 → 없으면 `HOLD_EXPIRED`
-2. 저장된 userId와 요청 userId 비교 → 불일치 시 `NOT_HOLD_OWNER`
+2. 저장된 userId와 Principal userId 비교 → 불일치 시 `NOT_HOLD_OWNER`
 3. Redis 키 삭제
 4. `hold:user:{showId}:{userId}` Set에서 seatId 제거
 5. 응답: status=AVAILABLE
 
-### 예약 확정 (`POST /api/seats/{seatId}/reservations`)
+### 예약 확정 (`POST /api/reservations/confirm`)
 1. Redis HOLD 존재 확인 → 없으면 `HOLD_EXPIRED`
 2. HOLD 소유자 확인 → 불일치 시 `NOT_HOLD_OWNER`
 3. DB에 RESERVED 존재 사전 확인 → 있으면 `ALREADY_RESERVED`
@@ -79,7 +79,7 @@ hold:user:{showId}:{userId}     = Set<seatId>   (hold 개수 추적, TTL 동기�
 5. Redis HOLD 키 삭제 + `hold:user` Set에서 seatId 제거
 6. DB UNIQUE 충돌 시 → `ALREADY_RESERVED` (최종 방어)
 
-### 예약 취소 (`DELETE /api/reservations/{reservationId}`)
+### 예약 취소 (`POST /api/reservations/{reservationId}/cancel`)
 1. DB에서 예약 조회 → 없으면 `RESERVATION_NOT_FOUND`
 2. 예약 소유자 확인 → 불일치 시 `NOT_RESERVATION_OWNER`
 3. 상태 확인 → CANCELED이면 `ALREADY_CANCELED`
