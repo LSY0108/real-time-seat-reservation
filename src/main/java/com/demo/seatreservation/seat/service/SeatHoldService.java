@@ -31,9 +31,8 @@ public class SeatHoldService {
     }
 
     @Transactional(readOnly = true)
-    public SeatHoldResponse hold(Long seatId, SeatHoldRequest request) {
+    public SeatHoldResponse hold(Long seatId, Long userId, SeatHoldRequest request) {
         Long showId = request.getShowId();
-        Long userId = request.getUserId();
 
         // 1) DB에 이미 RESERVED 있으면 막기
         boolean alreadyReserved = reservationRepository
@@ -68,10 +67,9 @@ public class SeatHoldService {
     }
 
     @Transactional
-    public SeatHoldCancelResponse cancelHold(Long seatId, SeatHoldCancelRequest request) {
+    public SeatHoldCancelResponse cancelHold(Long seatId, Long userId, SeatHoldCancelRequest request) {
 
         Long showId = request.getShowId();
-        Long userId = request.getUserId();
 
         String key = HoldKey.of(showId, seatId);
         String userHoldKey = "hold:user:" + showId + ":" + userId;
