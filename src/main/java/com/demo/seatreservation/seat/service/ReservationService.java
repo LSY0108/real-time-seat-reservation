@@ -28,11 +28,10 @@ public class ReservationService {
     }
 
     @Transactional
-    public ReservationConfirmResponse confirm(ReservationConfirmRequest request) {
+    public ReservationConfirmResponse confirm(Long userId, ReservationConfirmRequest request) {
 
         Long seatId = request.getSeatId();
         Long showId = request.getShowId();
-        Long userId = request.getUserId();
 
         String holdKey = HoldKey.of(showId, seatId);
 
