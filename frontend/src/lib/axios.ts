@@ -40,10 +40,14 @@ axiosInstance.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // refresh 요청 자체가 401 → 세션 만료, 로그인으로
-    if (originalRequest.url?.includes('/api/auth/refresh')) {
-      useAuthStore.getState().clearAuth();
-      redirectToLogin();
+    // 인증 불필요 엔드포인트의 401은 refresh 시도 없이 그대로 reject
+    // (로그인 실패, 회원가입 실패 등 — 인터셉터가 refresh를 시도하면 페이지 이동이 발생함)
+    const NO_REFRESH_PATHS = ['/api/auth/login', '/api/auth/signup', '/api/auth/refresh'];
+    if (NO_REFRESH_PATHS.some((path) => originalRequest.url?.includes(path))) {
+      if (originalRequest.url?.includes('/api/auth/refresh')) {
+        useAuthStore.getState().clearAuth();
+        redirectToLogin();
+      }
       return Promise.reject(error);
     }
 
