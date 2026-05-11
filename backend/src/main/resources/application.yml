@@ -27,5 +27,4 @@ jwt:
   refresh-token-expiration-ms: 1209600000  # 14일
 
 cors:
-  allowed-origins:
-    - http://localhost:3000
+  allowed-origins: http://localhost:3001
