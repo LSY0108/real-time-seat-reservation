@@ -532,16 +532,16 @@ export function useRequireAuth() {
 
 ### 2단계 — 인증 플로우
 
-- [ ] `src/api/auth.api.ts` — login, signup, logout, logoutAll, refresh API 함수
-- [ ] `src/features/auth/schemas/auth.schema.ts` — Zod schema
-- [ ] `src/features/auth/hooks/useLogin.ts`
-- [ ] `src/features/auth/hooks/useSignup.ts`
-- [ ] `src/features/auth/hooks/useLogout.ts`
-- [ ] `src/hooks/useRequireAuth.ts`
-- [ ] `src/features/auth/components/LoginForm.tsx`
-- [ ] `src/features/auth/components/SignupForm.tsx`
-- [ ] `src/app/(auth)/login/page.tsx`
-- [ ] `src/app/(auth)/signup/page.tsx`
+- [x] `src/api/auth.api.ts` — login, signup, logout, logoutAll, refresh API 함수
+- [x] `src/features/auth/schemas/auth.schema.ts` — Zod schema
+- [x] `src/features/auth/hooks/useLogin.ts`
+- [x] `src/features/auth/hooks/useSignup.ts`
+- [x] `src/features/auth/hooks/useLogout.ts`
+- [x] `src/hooks/useRequireAuth.ts`
+- [x] `src/features/auth/components/LoginForm.tsx`
+- [x] `src/features/auth/components/SignupForm.tsx`
+- [x] `src/app/(auth)/login/page.tsx`
+- [x] `src/app/(auth)/signup/page.tsx`
 
 ### 3단계 — 좌석 조회
 
