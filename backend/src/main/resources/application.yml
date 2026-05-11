@@ -25,3 +25,7 @@ jwt:
   secret: your-very-long-secret-key-your-very-long-secret-key-1234567890
   access-token-expiration-ms: 1800000      # 30분
   refresh-token-expiration-ms: 1209600000  # 14일
+
+cors:
+  allowed-origins:
+    - http://localhost:3000
