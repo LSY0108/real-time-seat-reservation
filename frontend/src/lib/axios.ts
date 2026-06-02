@@ -1,5 +1,5 @@
-import axios from 'axios';
-import type { ApiResponse } from '@/types/api.types';
+import axios, { type AxiosError } from 'axios';
+import type { ApiResponse, ErrorResponse } from '@/types/api.types';
 import { useAuthStore } from '@/store/auth.store';
 
 export const axiosInstance = axios.create({
@@ -25,9 +25,9 @@ function notifySubscribers(token: string) {
   subscribers = [];
 }
 
-function redirectToLogin() {
+function redirectToLogin(reason?: string) {
   if (typeof window !== 'undefined') {
-    window.location.href = '/login';
+    window.location.href = reason ? `/login?reason=${reason}` : '/login';
   }
 }
 
@@ -75,9 +75,10 @@ axiosInstance.interceptors.response.use(
 
       originalRequest.headers.Authorization = `Bearer ${newToken}`;
       return axiosInstance(originalRequest);
-    } catch {
+    } catch (refreshError) {
+      const errorCode = (refreshError as AxiosError<ErrorResponse>)?.response?.data?.errorCode;
       useAuthStore.getState().clearAuth();
-      redirectToLogin();
+      redirectToLogin(errorCode === 'INVALID_REFRESH_TOKEN' ? 'security' : undefined);
       return Promise.reject(error);
     } finally {
       isRefreshing = false;
