@@ -4,8 +4,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 import com.demo.seatreservation.domain.Reservation;
@@ -15,6 +21,7 @@ import com.demo.seatreservation.domain.enums.Role;
 import com.demo.seatreservation.repository.ReservationRepository;
 import com.demo.seatreservation.repository.UserRepository;
 import com.demo.seatreservation.seat.redis.HoldKey;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -103,10 +110,7 @@ class SeatHoldControllerTest {
 
     @Test
     void hold_success_createsRedisKeyWithTtl() throws Exception {
-        // 테스트 목적:
-        // 1) hold 요청이 성공(200)하는지
-        // 2) 응답 JSON이 성공 형태로 내려오는지
-        // 3) Redis에 hold 키가 생성되고 TTL이 설정되는지(선점이 실제로 걸렸는지)
+        // seat hold 키 생성, bundle 키 생성, TTL 설정 모두 확인
         User user = saveUser("hold@test.com");
         String token = loginAndGetToken("hold@test.com");
 
@@ -114,7 +118,8 @@ class SeatHoldControllerTest {
         Long seatId = seat.getId();
         long showId = 1L;
 
-        String key = HoldKey.of(showId, seatId);
+        String seatKey   = HoldKey.of(showId, seatId);
+        String bundleKey = HoldKey.bundleOf(showId, user.getId());
 
         mockMvc.perform(
                         post("/api/seats/{seatId}/hold", seatId)
@@ -131,18 +136,24 @@ class SeatHoldControllerTest {
                 .andExpect(jsonPath("$.data.status").value("HELD"))
                 .andExpect(jsonPath("$.data.expiresInSec").isNumber());
 
-        String owner = stringRedisTemplate.opsForValue().get(key);
-        Long ttl = stringRedisTemplate.getExpire(key, TimeUnit.SECONDS);
+        // seat hold 키 검증
+        String owner = stringRedisTemplate.opsForValue().get(seatKey);
+        Long seatTtl = stringRedisTemplate.getExpire(seatKey, TimeUnit.SECONDS);
+        Assertions.assertEquals(String.valueOf(user.getId()), owner);
+        Assertions.assertNotNull(seatTtl);
+        Assertions.assertTrue(seatTtl > 0 && seatTtl <= 300);
 
-        org.junit.jupiter.api.Assertions.assertEquals(String.valueOf(user.getId()), owner);
-        org.junit.jupiter.api.Assertions.assertNotNull(ttl);
-        org.junit.jupiter.api.Assertions.assertTrue(ttl > 0 && ttl <= 300);
+        // bundle 키 검증
+        Set<String> bundleMembers = stringRedisTemplate.opsForSet().members(bundleKey);
+        Long bundleTtl = stringRedisTemplate.getExpire(bundleKey, TimeUnit.SECONDS);
+        Assertions.assertNotNull(bundleMembers);
+        Assertions.assertTrue(bundleMembers.contains(String.valueOf(seatId)));
+        Assertions.assertNotNull(bundleTtl);
+        Assertions.assertTrue(bundleTtl > 0 && bundleTtl <= 300);
     }
 
     @Test
     void hold_noAuthToken_returns401() throws Exception {
-        // 테스트 목적:
-        // Authorization 헤더 없이 hold 요청 시 401이 발생해야 한다
         Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
 
@@ -158,9 +169,7 @@ class SeatHoldControllerTest {
 
     @Test
     void hold_twice_returns409_seatAlreadyHeld() throws Exception {
-        // 테스트 목적:
-        // 이미 선점된 좌석을 다른 사용자가 다시 hold하려고 하면
-        // 409 Conflict로 막히는지(= SEAT_ALREADY_HELD 케이스)
+        // 이미 선점된 좌석을 다른 사용자가 hold → SEAT_ALREADY_HELD 409
         saveUser("user1@test.com");
         saveUser("user2@test.com");
         String token1 = loginAndGetToken("user1@test.com");
@@ -170,7 +179,6 @@ class SeatHoldControllerTest {
         Long seatId = seat.getId();
         long showId = 1L;
 
-        // 1차 hold (user1 성공)
         mockMvc.perform(
                 post("/api/seats/{seatId}/hold", seatId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token1)
@@ -180,7 +188,6 @@ class SeatHoldControllerTest {
                                 """.formatted(showId))
         ).andExpect(status().isOk());
 
-        // 2차 hold (user2 → 충돌 409)
         mockMvc.perform(
                         post("/api/seats/{seatId}/hold", seatId)
                                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token2)
@@ -194,10 +201,8 @@ class SeatHoldControllerTest {
 
     @Test
     void hold_afterTtlExpired_canHoldAgain() throws Exception {
-        // 테스트 목적:
-        // TTL이 만료되면 선점 키가 사라지고
-        // 다른 사용자가 같은 좌석을 다시 hold 할 수 있어야 한다
-        saveUser("user1@test.com");
+        // seat hold 키와 bundle 키가 모두 만료된 후 다른 사용자가 같은 좌석을 hold 가능
+        User user1 = saveUser("user1@test.com");
         saveUser("user2@test.com");
         String token1 = loginAndGetToken("user1@test.com");
         String token2 = loginAndGetToken("user2@test.com");
@@ -206,9 +211,9 @@ class SeatHoldControllerTest {
         Long seatId = seat.getId();
         long showId = 1L;
 
-        String key = HoldKey.of(showId, seatId);
+        String seatKey    = HoldKey.of(showId, seatId);
+        String bundleKey1 = HoldKey.bundleOf(showId, user1.getId());
 
-        // user1 1차 hold 성공
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token1)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -217,11 +222,11 @@ class SeatHoldControllerTest {
                                 """.formatted(showId)))
                 .andExpect(status().isOk());
 
-        // TTL을 테스트용으로 1초로 줄여서 만료시키기
-        stringRedisTemplate.expire(key, 1, TimeUnit.SECONDS);
+        // user1의 seat 키와 bundle 키 모두 만료
+        stringRedisTemplate.expire(seatKey, 1, TimeUnit.SECONDS);
+        stringRedisTemplate.expire(bundleKey1, 1, TimeUnit.SECONDS);
         Thread.sleep(1500);
 
-        // user2 만료 후 다시 hold → 성공해야 정상
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token2)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -234,9 +239,6 @@ class SeatHoldControllerTest {
 
     @Test
     void hold_onReservedSeat_returns409_alreadyReserved() throws Exception {
-        // 테스트 목적:
-        // DB에 이미 RESERVED 상태의 예약이 있으면
-        // hold 요청을 거절해야 한다(= ALREADY_RESERVED 케이스)
         saveUser("user@test.com");
         String token = loginAndGetToken("user@test.com");
 
@@ -264,8 +266,6 @@ class SeatHoldControllerTest {
 
     @Test
     void hold_missingShowId_returns400() throws Exception {
-        // 테스트 목적:
-        // showId는 필수(@NotNull)라서 누락되면 400 Bad Request가 나와야 정상
         saveUser("user@test.com");
         String token = loginAndGetToken("user@test.com");
 
@@ -281,19 +281,17 @@ class SeatHoldControllerTest {
 
     @Test
     void cancelHold_success_returnsAvailable() throws Exception {
-        // 테스트 목적:
-        // 1) 정상적인 hold 취소 요청 시 200 OK 반환
-        // 2) Redis hold 키가 삭제되는지 확인
-        saveUser("user@test.com");
+        // hold 취소 성공: seat 키 삭제, 마지막 좌석이므로 bundle 키도 삭제
+        User user = saveUser("user@test.com");
         String token = loginAndGetToken("user@test.com");
 
         Seat seat = createSeat(1L, 1);
         Long seatId = seat.getId();
         long showId = 1L;
 
-        String key = HoldKey.of(showId, seatId);
+        String seatKey   = HoldKey.of(showId, seatId);
+        String bundleKey = HoldKey.bundleOf(showId, user.getId());
 
-        // 먼저 hold 생성
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -302,7 +300,6 @@ class SeatHoldControllerTest {
                                 """.formatted(showId)))
                 .andExpect(status().isOk());
 
-        // hold 취소 요청
         mockMvc.perform(delete("/api/seats/{seatId}/hold", seatId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -313,16 +310,15 @@ class SeatHoldControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.status").value("AVAILABLE"));
 
-        // Redis key 삭제 확인
-        String owner = stringRedisTemplate.opsForValue().get(key);
-        org.junit.jupiter.api.Assertions.assertNull(owner);
+        // seat 키 삭제 확인
+        Assertions.assertNull(stringRedisTemplate.opsForValue().get(seatKey));
+        // 마지막 좌석이었으므로 bundle 키도 삭제 확인
+        Long bundleSize = stringRedisTemplate.opsForSet().size(bundleKey);
+        Assertions.assertTrue(bundleSize == null || bundleSize == 0L);
     }
 
     @Test
     void cancelHold_notOwner_returns403() throws Exception {
-        // 테스트 목적:
-        // HOLD를 건 사용자와 다른 userId가 취소하려 하면
-        // 403 NOT_HOLD_OWNER가 발생해야 한다
         saveUser("user1@test.com");
         saveUser("user2@test.com");
         String token1 = loginAndGetToken("user1@test.com");
@@ -332,7 +328,6 @@ class SeatHoldControllerTest {
         Long seatId = seat.getId();
         long showId = 1L;
 
-        // user1이 hold
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token1)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -341,7 +336,6 @@ class SeatHoldControllerTest {
                                 """.formatted(showId)))
                 .andExpect(status().isOk());
 
-        // user2가 취소 시도
         mockMvc.perform(delete("/api/seats/{seatId}/hold", seatId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token2)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -353,9 +347,6 @@ class SeatHoldControllerTest {
 
     @Test
     void cancelHold_expired_returns409() throws Exception {
-        // 테스트 목적:
-        // HOLD가 이미 만료되었거나 존재하지 않을 때
-        // 409 HOLD_EXPIRED가 발생해야 한다
         saveUser("user@test.com");
         String token = loginAndGetToken("user@test.com");
 
@@ -363,9 +354,8 @@ class SeatHoldControllerTest {
         Long seatId = seat.getId();
         long showId = 1L;
 
-        String key = HoldKey.of(showId, seatId);
+        String seatKey = HoldKey.of(showId, seatId);
 
-        // hold 생성
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -374,11 +364,9 @@ class SeatHoldControllerTest {
                                 """.formatted(showId)))
                 .andExpect(status().isOk());
 
-        // TTL 강제 만료
-        stringRedisTemplate.expire(key, 1, TimeUnit.SECONDS);
+        stringRedisTemplate.expire(seatKey, 1, TimeUnit.SECONDS);
         Thread.sleep(1500);
 
-        // 취소 시도
         mockMvc.perform(delete("/api/seats/{seatId}/hold", seatId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -390,16 +378,13 @@ class SeatHoldControllerTest {
 
     @Test
     void hold_exceedsLimit_returns409() throws Exception {
-        // 테스트 목적:
-        // 한 사용자가 4개까지는 HOLD 가능하지만
-        // 5번째 HOLD 시도는 409 HOLD_LIMIT_EXCEEDED 발생해야 한다
+        // 4석까지 hold 가능, 5번째 시도 → HOLD_LIMIT_EXCEEDED 409
         saveUser("user@test.com");
         String token = loginAndGetToken("user@test.com");
 
         long showId = 1L;
         List<Seat> seats = createSeats(showId, 5);
 
-        // 1~4번 좌석 HOLD 성공
         for (int i = 0; i < 4; i++) {
             Long seatId = seats.get(i).getId();
 
@@ -412,7 +397,6 @@ class SeatHoldControllerTest {
                     .andExpect(status().isOk());
         }
 
-        // 5번째 HOLD → 실패해야 정상
         Long seatId5 = seats.get(4).getId();
 
         mockMvc.perform(post("/api/seats/{seatId}/hold", seatId5)
@@ -426,16 +410,13 @@ class SeatHoldControllerTest {
 
     @Test
     void hold_afterCancel_canHoldAgain() throws Exception {
-        // 테스트 목적:
-        // 4개 HOLD 상태에서 하나 cancel 하면
-        // 다시 HOLD가 가능해야 한다
+        // 4석 hold 후 1석 cancel → 5번째 hold 성공
         saveUser("user@test.com");
         String token = loginAndGetToken("user@test.com");
 
         long showId = 1L;
         List<Seat> seats = createSeats(showId, 5);
 
-        // 4개 HOLD
         for (int i = 0; i < 4; i++) {
             Long seatId = seats.get(i).getId();
 
@@ -448,7 +429,6 @@ class SeatHoldControllerTest {
                     .andExpect(status().isOk());
         }
 
-        // 하나 cancel
         Long cancelSeatId = seats.get(0).getId();
 
         mockMvc.perform(delete("/api/seats/{seatId}/hold", cancelSeatId)
@@ -459,7 +439,6 @@ class SeatHoldControllerTest {
                                 """.formatted(showId)))
                 .andExpect(status().isOk());
 
-        // 다시 HOLD → 성공해야 정상
         Long newSeatId = seats.get(4).getId();
 
         mockMvc.perform(post("/api/seats/{seatId}/hold", newSeatId)
@@ -469,5 +448,217 @@ class SeatHoldControllerTest {
                                 {"showId": %d}
                                 """.formatted(showId)))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void hold_multiSeat_bundleSizeGrows() throws Exception {
+        // 좌석을 추가할수록 bundle SCARD가 증가하는지 확인
+        User user = saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+
+        long showId = 1L;
+        List<Seat> seats = createSeats(showId, 3);
+        String bundleKey = HoldKey.bundleOf(showId, user.getId());
+
+        for (int i = 0; i < 3; i++) {
+            Long seatId = seats.get(i).getId();
+
+            mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"showId": %d}
+                                    """.formatted(showId)))
+                    .andExpect(status().isOk());
+
+            Long bundleSize = stringRedisTemplate.opsForSet().size(bundleKey);
+            Assertions.assertEquals(i + 1, bundleSize);
+        }
+    }
+
+    /**
+     * 테스트 목적:
+     * 서로 다른 20명의 사용자가 동시에 같은 좌석에 HOLD 요청을 보낼 때
+     * Lua Script의 SET NX 원자성 덕분에 정확히 1명만 성공해야 한다.
+     *
+     * 기대 결과:
+     * - HTTP 200 성공 응답 = 정확히 1건
+     * - HTTP 409 충돌 응답 = 나머지 19건
+     * - Redis seatKey에 owner가 1명만 기록됨
+     */
+    @Test
+    void hold_concurrentSameSeats_onlyOneSucceeds() throws Exception {
+        int threadCount = 20;
+        long showId = 1L;
+        Seat seat = createSeat(showId, 1);
+        Long seatId = seat.getId();
+
+        // 사용자 생성 및 토큰 발급은 순차적으로
+        List<String> tokens = new ArrayList<>();
+        for (int i = 0; i < threadCount; i++) {
+            saveUser("concurrent" + i + "@test.com");
+            tokens.add(loginAndGetToken("concurrent" + i + "@test.com"));
+        }
+
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch  = new CountDownLatch(threadCount);
+        AtomicInteger successCount  = new AtomicInteger(0);
+        AtomicInteger conflictCount = new AtomicInteger(0);
+
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        for (String token : tokens) {
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    int status = mockMvc.perform(
+                                    post("/api/seats/{seatId}/hold", seatId)
+                                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                                            .contentType(MediaType.APPLICATION_JSON)
+                                            .content("""
+                                                    {"showId": %d}
+                                                    """.formatted(showId))
+                            )
+                            .andReturn()
+                            .getResponse()
+                            .getStatus();
+
+                    if (status == 200) successCount.incrementAndGet();
+                    else if (status == 409) conflictCount.incrementAndGet();
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown(); // 전 스레드 동시 출발
+        doneLatch.await(15, TimeUnit.SECONDS);
+        executor.shutdown();
+
+        // 정확히 1명만 성공
+        Assertions.assertEquals(1, successCount.get(), "hold 성공은 정확히 1건이어야 한다");
+        Assertions.assertEquals(threadCount - 1, conflictCount.get());
+
+        // Redis seatKey owner 확인
+        String owner = stringRedisTemplate.opsForValue().get(HoldKey.of(showId, seatId));
+        Assertions.assertNotNull(owner, "hold 성공한 사람의 seatKey가 Redis에 있어야 한다");
+    }
+
+    /**
+     * 테스트 목적:
+     * 같은 사용자가 10개의 서로 다른 좌석에 동시에 HOLD 요청을 보낼 때
+     * Lua Script의 SCARD → SADD 원자적 실행 덕분에 bundle 최대 4석 제한이 깨지지 않아야 한다.
+     *
+     * 기대 결과:
+     * - HTTP 200 성공 응답 = 정확히 4건
+     * - HTTP 409 충돌 응답 = 나머지 6건 (HOLD_LIMIT_EXCEEDED)
+     * - Redis bundle SCARD = 4
+     */
+    @Test
+    void hold_concurrentExceedLimit_exactlyFourSucceed() throws Exception {
+        int threadCount = 10;
+        long showId = 1L;
+
+        User user = saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+        List<Seat> seats = createSeats(showId, threadCount);
+        String bundleKey = HoldKey.bundleOf(showId, user.getId());
+
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch  = new CountDownLatch(threadCount);
+        AtomicInteger successCount      = new AtomicInteger(0);
+        AtomicInteger limitExceededCount = new AtomicInteger(0);
+
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        for (Seat seat : seats) {
+            Long seatId = seat.getId();
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    int status = mockMvc.perform(
+                                    post("/api/seats/{seatId}/hold", seatId)
+                                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                                            .contentType(MediaType.APPLICATION_JSON)
+                                            .content("""
+                                                    {"showId": %d}
+                                                    """.formatted(showId))
+                            )
+                            .andReturn()
+                            .getResponse()
+                            .getStatus();
+
+                    if (status == 200) successCount.incrementAndGet();
+                    else if (status == 409) limitExceededCount.incrementAndGet();
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown();
+        doneLatch.await(15, TimeUnit.SECONDS);
+        executor.shutdown();
+
+        // 정확히 4석만 성공
+        Assertions.assertEquals(4, successCount.get(), "bundle 최대 4석 제한이 지켜져야 한다");
+        Assertions.assertEquals(threadCount - 4, limitExceededCount.get());
+
+        // bundle SCARD 직접 확인
+        Long bundleSize = stringRedisTemplate.opsForSet().size(bundleKey);
+        Assertions.assertEquals(4L, bundleSize, "bundle에 정확히 4개의 seatId가 있어야 한다");
+    }
+
+    /**
+     * 테스트 목적:
+     * 두 번째 이후 좌석을 HOLD할 때 해당 seatKey의 TTL이
+     * 새로운 300초가 아닌 bundle의 남은 TTL과 동기화되는지 확인한다.
+     * Lua Script의 PTTL 분기(isFirstSeat=0 경로)가 실제로 동작하는지 검증한다.
+     *
+     * 기대 결과:
+     * - 첫 번째 좌석 hold 후 bundle TTL을 150초로 강제 조정
+     * - 두 번째 좌석 hold 시 seatKey TTL ≈ 150초 (5초 오차 허용)
+     * - 300초가 아닌 남은 세션 시간에 맞춰져야 한다
+     */
+    @Test
+    void hold_secondSeat_ttlSyncedToBundle() throws Exception {
+        User user = saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+
+        long showId = 1L;
+        List<Seat> seats = createSeats(showId, 2);
+        Long seatId1 = seats.get(0).getId();
+        Long seatId2 = seats.get(1).getId();
+        String bundleKey = HoldKey.bundleOf(showId, user.getId());
+        String seat2Key  = HoldKey.of(showId, seatId2);
+
+        // 첫 번째 좌석 hold (bundle TTL = 300s로 시작)
+        mockMvc.perform(post("/api/seats/{seatId}/hold", seatId1)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isOk());
+
+        // bundle TTL을 150초로 강제 조정 (남은 세션 시간을 임의로 줄임)
+        stringRedisTemplate.expire(bundleKey, 150, TimeUnit.SECONDS);
+
+        // 두 번째 좌석 hold
+        mockMvc.perform(post("/api/seats/{seatId}/hold", seatId2)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isOk());
+
+        // seat2 TTL이 bundle 남은 TTL(≈150s)에 맞춰졌는지 확인 (5초 오차 허용)
+        Long seat2Ttl = stringRedisTemplate.getExpire(seat2Key, TimeUnit.SECONDS);
+        Assertions.assertNotNull(seat2Ttl);
+        Assertions.assertTrue(seat2Ttl >= 145 && seat2Ttl <= 150,
+                "seat2 TTL(%ds)이 bundle 남은 TTL(≈150s)과 동기화되어야 한다".formatted(seat2Ttl));
     }
 }
