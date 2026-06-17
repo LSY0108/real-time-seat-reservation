@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import Link from 'next/link';
@@ -10,6 +11,8 @@ import { loginSchema, type LoginFormValues } from '@/features/auth/schemas/auth.
 import type { ErrorResponse } from '@/types/api.types';
 
 export function LoginForm() {
+  const searchParams = useSearchParams();
+  const isSecurityLogout = searchParams.get('reason') === 'security';
   const { mutate: login, isPending } = useLogin();
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -41,6 +44,12 @@ export function LoginForm() {
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
       <div className="w-full max-w-sm">
         <h1 className="mb-8 text-center text-2xl font-semibold text-zinc-900">로그인</h1>
+
+        {isSecurityLogout && (
+          <p className="mb-4 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            보안을 위해 로그아웃됐습니다. 다시 로그인해 주세요.
+          </p>
+        )}
 
         <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
           {serverError && (

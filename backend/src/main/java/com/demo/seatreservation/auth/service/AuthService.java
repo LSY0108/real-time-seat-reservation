@@ -9,6 +9,7 @@ import com.demo.seatreservation.domain.User;
 import com.demo.seatreservation.repository.UserRepository;
 import com.demo.seatreservation.security.jwt.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -22,6 +23,7 @@ import java.util.UUID;
 
 import java.security.SecureRandom;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -170,6 +172,16 @@ public class AuthService {
             throw new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN);
         }
 
+        // 이미 rotate된 토큰을 재사용한 경우 → 탈취 확정, 전체 세션 종료
+        if (refreshMetadata.startsWith("ROTATED:")) {
+            String rawMetadata = refreshMetadata.substring("ROTATED:".length());
+            RefreshTokenContext rotatedContext = parseRefreshMetadata(rawMetadata);
+            log.warn("[Security] Rotated token reuse detected. userId={}, sessionId={}",
+                    rotatedContext.userId(), rotatedContext.sessionId());
+            logoutAll(rotatedContext.userId());
+            throw new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN);
+        }
+
         // refreshMetadata 형식: "userId:sessionId"
         RefreshTokenContext context = parseRefreshMetadata(refreshMetadata);
         Long userId = context.userId();
@@ -181,9 +193,10 @@ public class AuthService {
         // Redis에 저장된 실제 refresh token과 비교
         String storedToken = stringRedisTemplate.opsForValue().get(refreshKey);
 
-        // 값이 다르면 탈취 또는 위조 가능성으로 처리
+        // 역조회 키는 있는데 본체 값이 다름 → 탈취 확정, 전체 세션 종료
         if (storedToken == null || !storedToken.equals(refreshToken)) {
-            deleteRefreshSession(refreshKey, refreshLookupKey, sessionSetKey, sessionId);
+            log.warn("[Security] Refresh token mismatch detected. userId={}, sessionId={}", userId, sessionId);
+            logoutAll(userId);
             throw new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN);
         }
 
@@ -193,8 +206,10 @@ public class AuthService {
         String newAccessToken = jwtTokenProvider.generateAccessToken(user, sessionId);
         String newRefreshToken = generateOpaqueRefreshToken();
 
-        // 기존 토큰 삭제 후 새 토큰 저장 (rotation)
-        stringRedisTemplate.delete(refreshLookupKey);
+        // 기존 역조회 키를 ROTATED 마킹으로 대체 (5분 유지)
+        // → 피해자가 이 토큰으로 재시도 시 탈취 감지 가능
+        stringRedisTemplate.opsForValue()
+                .set(refreshLookupKey, "ROTATED:" + userId + ":" + sessionId, Duration.ofMinutes(5));
         saveRefreshToken(userId, sessionId, newRefreshToken);
 
         // access token만 응답 body로 내려주기 위한 DTO

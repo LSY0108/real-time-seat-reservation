@@ -6,6 +6,8 @@ export interface ApiResponse<T> {
 
 export interface ErrorResponse {
   success: false;
+  errorCode: string;
   message: string;
-  code: string;
+  path: string;
+  timestamp: string;
 }

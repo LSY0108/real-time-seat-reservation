@@ -150,15 +150,15 @@ public class AuthRefreshControllerTest {
     }
 
     @Test
-    void refresh_oldRefreshTokenReuse_returns401() throws Exception {
+    void refresh_oldRefreshTokenReuse_terminatesAllSessions() throws Exception {
         // 테스트 목적:
-        // refresh rotation 후 이전 refresh token을 다시 쓰면
-        // 401 INVALID_REFRESH_TOKEN이 발생해야 한다
+        // refresh rotation 후 이전 refresh token(ROTATED 마킹)을 재사용하면
+        // 탈취로 간주하여 전체 세션을 종료하고 401을 반환해야 한다
 
         User savedUser = saveUser("reuse@test.com", "12345678", "홍길동", "010-1111-2222");
         LoginResult loginResult = loginAndGetResult("reuse@test.com", "12345678");
 
-        MvcResult firstRefresh = mockMvc.perform(
+        mockMvc.perform(
                         post("/api/auth/refresh")
                                 .cookie(new Cookie("refreshToken", loginResult.refreshToken()))
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -166,8 +166,7 @@ public class AuthRefreshControllerTest {
                 .andExpect(status().isOk())
                 .andReturn();
 
-        String newRefreshToken = extractRefreshTokenFromCookie(firstRefresh.getResponse().getHeader("Set-Cookie"));
-
+        // 이전 토큰으로 재시도 → ROTATED 마킹 감지 → logoutAll 트리거
         mockMvc.perform(
                         post("/api/auth/refresh")
                                 .cookie(new Cookie("refreshToken", loginResult.refreshToken()))
@@ -177,15 +176,17 @@ public class AuthRefreshControllerTest {
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.errorCode").value("INVALID_REFRESH_TOKEN"));
 
+        // logoutAll로 세션 전체 삭제됨
         String refreshKey = "refresh:" + savedUser.getId() + ":" + loginResult.sessionId();
-        assertThat(stringRedisTemplate.opsForValue().get(refreshKey)).isEqualTo(newRefreshToken);
+        assertThat(stringRedisTemplate.opsForValue().get(refreshKey)).isNull();
+        assertThat(stringRedisTemplate.hasKey("refresh:sessions:" + savedUser.getId())).isFalse();
     }
 
     @Test
-    void refresh_redisMismatch_returns401() throws Exception {
+    void refresh_redisMismatch_terminatesAllSessions() throws Exception {
         // 테스트 목적:
-        // Redis에 저장된 refresh token 값과
-        // 쿠키 값이 다르면 401 INVALID_REFRESH_TOKEN이 발생해야 한다
+        // Redis에 저장된 refresh token 값과 쿠키 값이 다르면 탈취로 간주하여
+        // 전체 세션을 종료하고 401을 반환해야 한다
 
         User savedUser = saveUser("mismatch@test.com", "12345678", "홍길동", "010-1111-2222");
         LoginResult loginResult = loginAndGetResult("mismatch@test.com", "12345678");
@@ -202,9 +203,9 @@ public class AuthRefreshControllerTest {
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.errorCode").value("INVALID_REFRESH_TOKEN"));
 
-        String sessionSetKey = "refresh:sessions:" + savedUser.getId();
-        Boolean isMember = stringRedisTemplate.opsForSet().isMember(sessionSetKey, loginResult.sessionId());
-        assertThat(isMember).isFalse();
+        // logoutAll로 세션 전체 삭제됨
+        assertThat(stringRedisTemplate.opsForValue().get(refreshKey)).isNull();
+        assertThat(stringRedisTemplate.hasKey("refresh:sessions:" + savedUser.getId())).isFalse();
     }
 
     @Test
@@ -265,6 +266,68 @@ public class AuthRefreshControllerTest {
         String newRefreshToken = extractRefreshTokenFromCookie(result.getResponse().getHeader("Set-Cookie"));
         assertThat(newRefreshToken).isNotBlank();
         assertThat(newRefreshToken).isNotEqualTo(loginResult.refreshToken());
+    }
+
+    @Test
+    void refresh_success_oldLookupKeyMarkedAsRotated() throws Exception {
+        // 테스트 목적:
+        // refresh 성공 후 이전 토큰의 역조회 키가
+        // "ROTATED:" 마킹으로 5분간 유지되는지 확인
+
+        User savedUser = saveUser("rotated@test.com", "12345678", "홍길동", "010-1111-2222");
+        LoginResult loginResult = loginAndGetResult("rotated@test.com", "12345678");
+
+        mockMvc.perform(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie("refreshToken", loginResult.refreshToken()))
+                                .contentType(MediaType.APPLICATION_JSON)
+                )
+                .andExpect(status().isOk());
+
+        String oldLookupKey = "refresh:token:" + loginResult.refreshToken();
+        String markedValue = stringRedisTemplate.opsForValue().get(oldLookupKey);
+        assertThat(markedValue).startsWith("ROTATED:");
+        assertThat(markedValue).isEqualTo("ROTATED:" + savedUser.getId() + ":" + loginResult.sessionId());
+    }
+
+    @Test
+    void refresh_rotatedTokenReuse_terminatesOtherDeviceSessions() throws Exception {
+        // 테스트 목적:
+        // ROTATED 마킹된 토큰 재사용 시 logoutAll이 호출되어
+        // 다른 기기(핸드폰 등) 세션까지 모두 종료되어야 한다
+
+        User savedUser = saveUser("attack@test.com", "12345678", "홍길동", "010-1111-2222");
+
+        LoginResult deviceA = loginAndGetResult("attack@test.com", "12345678");
+        LoginResult deviceB = loginAndGetResult("attack@test.com", "12345678");
+
+        // deviceA refresh → tokenA가 ROTATED 마킹됨
+        mockMvc.perform(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie("refreshToken", deviceA.refreshToken()))
+                                .contentType(MediaType.APPLICATION_JSON)
+                )
+                .andExpect(status().isOk());
+
+        // deviceA 이전 토큰 재사용 → 탈취 감지 → logoutAll
+        mockMvc.perform(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie("refreshToken", deviceA.refreshToken()))
+                                .contentType(MediaType.APPLICATION_JSON)
+                )
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_REFRESH_TOKEN"));
+
+        // deviceA 세션 삭제
+        String refreshKeyA = "refresh:" + savedUser.getId() + ":" + deviceA.sessionId();
+        assertThat(stringRedisTemplate.opsForValue().get(refreshKeyA)).isNull();
+
+        // deviceB 세션도 함께 삭제됨 (logoutAll)
+        String refreshKeyB = "refresh:" + savedUser.getId() + ":" + deviceB.sessionId();
+        assertThat(stringRedisTemplate.opsForValue().get(refreshKeyB)).isNull();
+
+        // 세션 목록 자체도 삭제됨
+        assertThat(stringRedisTemplate.hasKey("refresh:sessions:" + savedUser.getId())).isFalse();
     }
 
     private String extractRefreshTokenFromCookie(String setCookieHeader) {
