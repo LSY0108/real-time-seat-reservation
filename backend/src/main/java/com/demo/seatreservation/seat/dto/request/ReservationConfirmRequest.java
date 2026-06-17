@@ -7,8 +7,5 @@ import lombok.Getter;
 public class ReservationConfirmRequest {
 
     @NotNull
-    private Long seatId;
-
-    @NotNull
     private Long showId;
 }
