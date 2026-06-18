@@ -13,6 +13,11 @@ import com.demo.seatreservation.seat.redis.HoldRedisRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.util.List;
+import java.util.Set;
 
 @Service
 public class ReservationService {
@@ -28,58 +33,55 @@ public class ReservationService {
     }
 
     @Transactional
-    public ReservationConfirmResponse confirm(Long userId, ReservationConfirmRequest request) {
-
-        Long seatId = request.getSeatId();
+    public ReservationConfirmResponse confirmAll(Long userId, ReservationConfirmRequest request) {
         Long showId = request.getShowId();
+        String bundleKey = HoldKey.bundleOf(showId, userId);
 
-        String holdKey = HoldKey.of(showId, seatId);
-
-        // 1. HOLD 존재 확인
-        String owner = holdRedisRepository.getOwner(holdKey);
-
-        if (owner == null) {
-            throw new BusinessException(ErrorCode.HOLD_EXPIRED);
+        // 1. 번들 존재 확인 (PTTL -2 == 키 없음)
+        long bundleTtlMs = holdRedisRepository.getBundleRemainingTtlMs(bundleKey);
+        if (bundleTtlMs == -2L) {
+            throw new BusinessException(ErrorCode.SESSION_EXPIRED);
         }
 
-        // 2. HOLD 소유자 확인
-        if (!owner.equals(String.valueOf(userId))) {
-            throw new BusinessException(ErrorCode.NOT_HOLD_OWNER);
+        // 2. 번들에서 좌석 목록 조회
+        Set<String> seatIdStrs = holdRedisRepository.getBundleSeatIds(bundleKey);
+        if (seatIdStrs == null || seatIdStrs.isEmpty()) {
+            throw new BusinessException(ErrorCode.SESSION_EXPIRED);
         }
 
-        // 3. DB 예약 중복 확인
-        if (reservationRepository.existsByShowIdAndSeatIdAndStatus(
-                showId,
-                seatId,
-                ReservationStatus.RESERVED
-        )) {
-            throw new BusinessException(ErrorCode.ALREADY_RESERVED);
-        }
+        List<Long> seatIds = seatIdStrs.stream().map(Long::parseLong).toList();
 
-        // 4. DB 예약 저장
+        // 3. DB 커밋 후 Redis 정리 (afterCommit)
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                for (Long seatId : seatIds) {
+                    holdRedisRepository.delete(HoldKey.of(showId, seatId));
+                }
+                holdRedisRepository.deleteBundle(bundleKey);
+            }
+        });
+
+        // 4. 전체 좌석 일괄 예약 저장
+        // flush()로 UNIQUE 위반을 커밋 전에 강제 표면화 — 테스트에서 즉시 잡히도록
         try {
-            reservationRepository.save(
-                    Reservation.builder()
+            List<Reservation> reservations = seatIds.stream()
+                    .map(seatId -> Reservation.builder()
                             .seatId(seatId)
                             .showId(showId)
                             .userId(userId)
                             .status(ReservationStatus.RESERVED)
-                            .build()
-            );
-
+                            .build())
+                    .toList();
+            reservationRepository.saveAll(reservations);
+            reservationRepository.flush();
         } catch (DataIntegrityViolationException e) {
             throw new BusinessException(ErrorCode.ALREADY_RESERVED);
         }
 
-        // 5. Redis HOLD 삭제
-        holdRedisRepository.delete(holdKey);
-
-        String userHoldKey = "hold:user:" + showId + ":" + userId;
-        holdRedisRepository.removeUserHold(userHoldKey, seatId);
-
         return ReservationConfirmResponse.builder()
-                .seatId(seatId)
                 .showId(showId)
+                .reservedSeatIds(seatIds)
                 .status(ReservationStatus.RESERVED)
                 .build();
     }
@@ -101,7 +103,7 @@ public class ReservationService {
             throw new BusinessException(ErrorCode.ALREADY_CANCELED);
         }
 
-        // 4. 예약 취소 (도메인 메서드 사용)
+        // 4. 예약 취소
         reservation.cancel();
 
         return ReservationCancelResponse.builder()

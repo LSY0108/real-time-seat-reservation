@@ -23,6 +23,6 @@ public class ReservationConfirmController {
             @Valid @RequestBody ReservationConfirmRequest request,
             @AuthenticationPrincipal CustomUserPrincipal principal
     ) {
-        return ApiResponse.ok(reservationService.confirm(principal.getUserId(), request));
+        return ApiResponse.ok(reservationService.confirmAll(principal.getUserId(), request));
     }
 }
