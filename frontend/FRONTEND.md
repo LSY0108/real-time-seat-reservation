@@ -17,10 +17,11 @@ Next.js 기반 공연 좌석 예매 서비스 프론트엔드 아키텍처 문�
 8. [서버 상태 관리 전략](#8-서버-상태-관리-전략)
 9. [보안 정책](#9-보안-정책)
 10. [페이지 인증 정책](#10-페이지-인증-정책)
-11. [구현 순서](#11-구현-순서)
-12. [향후 확장 방향](#12-향후-확장-방향)
-13. [개발 규칙 및 컨벤션](#13-개발-규칙-및-컨벤션)
-14. [설계 근거](#14-설계-근거)
+11. [예매 세션(Booking Session) HOLD 구조](#11-예매-세션booking-session-hold-구조)
+12. [구현 순서](#12-구현-순서)
+13. [향후 확장 방향](#13-향후-확장-방향)
+14. [개발 규칙 및 컨벤션](#14-개발-규칙-및-컨벤션)
+15. [설계 근거](#15-설계-근거)
 
 ---
 
@@ -44,9 +45,9 @@ Next.js 기반 공연 좌석 예매 서비스 프론트엔드 아키텍처 문�
 | POST | `/api/auth/logout` | 필요 | 현재 세션 로그아웃 |
 | POST | `/api/auth/logout-all` | 필요 | 전체 세션 로그아웃 |
 | GET | `/api/seats?showId=` | 불필요 | 좌석 실시간 상태 조회 |
-| POST | `/api/seats/{seatId}/hold` | 필요 | 좌석 HOLD |
+| POST | `/api/seats/{seatId}/hold` | 필요 | 좌석 HOLD (예매 세션에 누적) |
 | DELETE | `/api/seats/{seatId}/hold` | 필요 | HOLD 취소 |
-| POST | `/api/reservations/confirm` | 필요 | 예약 확정 |
+| POST | `/api/reservations/confirm` | 필요 | 예매 세션 내 HOLD된 좌석 전체 일괄 확정 |
 | GET | `/api/me/reservations?status=` | 필요 | 내 예약 조회 |
 | POST | `/api/reservations/{reservationId}/cancel` | 필요 | 예약 취소 |
 
@@ -128,7 +129,7 @@ src/
 │   │   ├── hooks/              # useLogin, useSignup, useLogout, useLogoutAll
 │   │   └── schemas/            # auth.schema.ts (Zod)
 │   ├── seat/
-│   │   ├── components/         # SeatGrid, SeatCard, HoldTimer, ConfirmModal
+│   │   ├── components/         # SeatsView, SeatGrid, SeatCard, HoldTimer, ConfirmModal
 │   │   ├── hooks/              # useSeats, useSeatHold, useReservationConfirm
 │   │   └── schemas/
 │   └── reservation/
@@ -193,53 +194,14 @@ src/
 
 ## 4. Auth 아키텍처
 
+> 회원가입/로그인/새로고침 복구/로그아웃의 단계별 흐름, 다이어그램, 파일별 역할은 **[AUTH_FLOW.md](./AUTH_FLOW.md)가 기준 문서**다. 아래는 다른 섹션(§7, §9, §14)에서 참조하는 핵심 구조만 요약한다.
+
 ### 토큰 저장 전략
 
 | 토큰 | 저장 위치 | 이유 |
 |------|-----------|------|
 | Access Token (JWT, 30분) | Zustand 메모리 | XSS 방어. localStorage는 스크립트로 탈취 가능 |
 | Refresh Token (Opaque, 14일) | HttpOnly Cookie | JS에서 접근 불가. 서버만 읽을 수 있음 |
-
-### 상태별 흐름
-
-**1. 최초 로그인**
-
-```
-POST /api/auth/login
-  └─ 응답: accessToken (body) + refreshToken (Set-Cookie)
-        └─ accessToken → useAuthStore.setAuth(token, user)
-        └─ refreshToken → 브라우저가 HttpOnly Cookie로 자동 저장
-```
-
-**2. 페이지 새로고침 / 첫 진입 (토큰 없음)**
-
-```
-useRequireAuth() 훅 실행
-  └─ accessToken이 없음
-        └─ POST /api/auth/refresh (쿠키 자동 전송)
-              ├─ 성공: 새 accessToken → useAuthStore.setAuth()
-              └─ 실패: clearAuth() → /login 리다이렉트
-```
-
-**3. 인증 필요 API 호출**
-
-```
-axiosInstance 요청
-  └─ request interceptor: Authorization: Bearer {accessToken} 자동 주입
-        └─ 정상 응답: 그대로 반환
-        └─ 401: response interceptor → refresh 흐름 진입
-```
-
-**4. 로그아웃**
-
-```
-POST /api/auth/logout (현재 세션)
-또는
-POST /api/auth/logout-all (전체 세션)
-  └─ 응답 쿠키 만료 처리 (서버)
-        └─ useAuthStore.clearAuth() → accessToken, user = null
-              └─ /login 리다이렉트
-```
 
 ### authStore 구조
 
@@ -259,102 +221,31 @@ interface AuthStore {
   setAuth: (token: string, user: User) => void;
   setAccessToken: (token: string) => void;
   clearAuth: () => void;
+  isAuthenticated: () => boolean;
 }
 ```
-인증 여부는 !!accessToken으로 직접 판단한다.
 
-**persist는 사용하지 않는다.** accessToken은 의도적으로 새로고침 시 초기화되어야 하며, 이후 refresh 쿠키로 복원된다.
+**persist는 사용하지 않는다.** accessToken은 의도적으로 새로고침 시 초기화되어야 하며, 이후 refresh 쿠키로 복원된다. 상세 복구 흐름은 AUTH_FLOW.md §1-7 참고.
 
 ---
 
-## 5. Axios Interceptor 흐름
+## 5. Axios Interceptor 흐름 (요약)
 
-```
-API 요청 발생
-  │
-  ▼
-[Request Interceptor]
-  └─ useAuthStore.getState().accessToken 읽기
-  └─ headers.Authorization = `Bearer ${token}` 주입
-  │
-  ▼
-서버 요청
-  │
-  ├─ 정상 응답 (2xx) → 그대로 반환
-  │
-  └─ 에러 응답
-        ├─ 401이 아닌 경우 → 그대로 reject
-        └─ 401인 경우
-              ├─ /api/auth/refresh 요청 자체가 401 → clearAuth() + /login
-              └─ 일반 API 401 → [Response Interceptor] → refresh 흐름
-```
+`src/lib/axios.ts`의 request/response 인터셉터가 인증 헤더 주입과 401 처리를 전담한다. 전체 다이어그램과 `NO_REFRESH_PATHS`(로그인/회원가입 401은 refresh 없이 그대로 reject) 처리 로직은 **[AUTH_FLOW.md §1-5](./AUTH_FLOW.md#1-5-accesstoken-만료-시-refresh-흐름)** 참고.
 
-### 핵심 구현 포인트
-
-- `originalRequest._retry` 플래그로 무한 retry 방지
-- `withCredentials: true` 설정 필수 (refreshToken HttpOnly Cookie 자동 전송)
-- refresh 요청 URL 포함 여부 확인으로 무한 루프 차단
-  - refresh retry 제외 대상:
-    - /api/auth/login
-    - /api/auth/signup
-    - /api/auth/refresh
+핵심만 요약:
+- request interceptor: `useAuthStore.getState().accessToken`을 읽어 `Authorization: Bearer {token}` 자동 주입
+- response interceptor: 401 발생 시 refresh 흐름 진입 (`originalRequest._retry` 플래그로 무한 retry 방지)
+- `withCredentials: true` 필수 (refreshToken 쿠키 자동 전송)
+- `/api/auth/login`, `/api/auth/signup`, `/api/auth/refresh`는 refresh retry 대상에서 제외 (무한 루프 및 폼 에러 메시지 소실 방지)
 
 ---
 
-## 6. Refresh Retry 흐름
+## 6. Refresh Retry 흐름 (요약)
 
-### 단일 요청 401 흐름
+백엔드가 Refresh Token Rotation을 사용하므로, 동시에 여러 요청이 401이 되어도 refresh는 단 한 번만 호출해야 한다. `isRefreshing` 플래그 + `subscribers` 콜백 큐로 보장한다 — 첫 401이 refresh를 실행하고, 이후 401들은 큐에 대기했다가 완료 후 새 토큰으로 일괄 재시도한다.
 
-```
-API 요청 → 401
-  └─ _retry 플래그 false 확인
-        └─ isRefreshing = true 설정
-              └─ POST /api/auth/refresh (쿠키 자동 전송)
-                    ├─ 성공: 새 accessToken → setAccessToken()
-                    │         originalRequest 재시도 (새 토큰 사용)
-                    └─ 실패: clearAuth() + /login 리다이렉트
-```
-
-### 동시 다중 401 흐름 (Refresh Token Rotation 대응)
-
-백엔드가 Refresh Token Rotation을 사용하므로, 동시 401이 발생하면 반드시 하나의 refresh만 호출해야 한다. 여러 번 호출 시 두 번째 요청부터 `INVALID_REFRESH_TOKEN`으로 실패한다.
-
-```
-요청 A, B, C 동시에 401 발생
-  │
-  ├─ 요청 A: isRefreshing = false → refresh 실행 시작, isRefreshing = true
-  │
-  ├─ 요청 B: isRefreshing = true → subscribers 배열에 콜백 등록 후 대기
-  │
-  ├─ 요청 C: isRefreshing = true → subscribers 배열에 콜백 등록 후 대기
-  │
-  └─ 요청 A refresh 완료
-        └─ notifySubscribers(newToken) 호출
-              ├─ 요청 B 재시도 (새 토큰)
-              └─ 요청 C 재시도 (새 토큰)
-```
-
-이 패턴이 없으면 A, B, C 모두 개별로 refresh를 호출하고, B와 C는 토큰 불일치로 실패한다.
-
-```typescript
-// src/lib/axios.ts 핵심 구조
-let isRefreshing = false;
-let subscribers: Array<(token: string) => void> = [];
-
-// 401 처리
-if (isRefreshing) {
-  // 대기 후 재시도
-  return new Promise((resolve) => {
-    subscribers.push((token) => {
-      originalRequest.headers.Authorization = `Bearer ${token}`;
-      resolve(axiosInstance(originalRequest));
-    });
-  });
-}
-
-isRefreshing = true;
-// ... refresh 실행 후 notifySubscribers()
-```
+전체 시퀀스 다이어그램과 구현 코드는 **[AUTH_FLOW.md §1-5, §3](./AUTH_FLOW.md#3-설계-포인트)** 참고.
 
 ---
 
@@ -514,7 +405,51 @@ export function useRequireAuth() {
 
 ---
 
-## 11. 구현 순서
+## 11. 예매 세션(Booking Session) HOLD 구조
+
+백엔드가 좌석 단위 HOLD에서 **예매 세션(showId + userId) 단위 HOLD**로 구조를 전환했다 (`refactor/bundle-hold`). 프론트엔드의 HOLD/확정 플로우는 이 구조를 전제로 구현해야 한다.
+
+### 핵심 변경 사항
+
+| 항목 | 이전 | 이후 |
+|------|------|------|
+| HOLD 단위 | 좌석 개별, TTL도 좌석마다 독립 | 좌석은 개별로 HOLD하지만 (showId, userId) 세션에 누적됨 |
+| 세션 TTL | — | 세션 최초 생성 시 300초 고정. 이후 추가되는 좌석은 **세션의 남은 TTL을 그대로 상속** (리셋되지 않음) |
+| 세션당 최대 좌석 수 | 제한 없음 | 4석 (초과 시 `HOLD_LIMIT_EXCEEDED`, 409) |
+| 예약 확정 요청 | `{ seatId, showId }` (좌석 1개씩) | `{ showId }`만 전송 (세션 전체 일괄 확정) |
+| 예약 확정 응답 | 단일 `seatId` | `reservedSeatIds: number[]` 배열 |
+| 세션 만료/부재 에러 | — | `SESSION_EXPIRED` (409) 신규 |
+
+### 좌석 HOLD — 개별 호출, 세션에 누적
+
+```
+POST /api/seats/{seatId}/hold  { showId }
+  └─ 응답: { seatId, showId, status: "HELD", expiresInSec }
+```
+
+같은 (showId, userId)로 첫 좌석을 hold하면 세션이 생성되고 300초가 부여된다. 같은 세션에 두 번째 이후 좌석을 hold하면 **새로 300초를 받는 것이 아니라 세션에 남은 TTL을 그대로 받는다.** 예를 들어 세션 생성 후 100초가 지난 시점에 두 번째 좌석을 hold하면 `expiresInSec`는 200으로 응답된다.
+
+→ **좌석별로 독립된 카운트다운을 만들면 안 된다. 세션 전체가 하나의 만료 시각을 공유한다.**
+
+### 예약 확정 — 세션 전체 일괄 확정
+
+```
+POST /api/reservations/confirm  { showId }
+  └─ 응답: { showId, reservedSeatIds: number[], status: "RESERVED" }
+```
+
+`seatId`는 보내지 않는다. 서버가 해당 (showId, userId) 세션에 현재 HOLD된 **모든 좌석**을 한 번에 확정한다. 사용자가 좌석을 여러 번 나눠서 hold했더라도 확정 호출은 한 번이면 된다. 세션이 만료되었거나 존재하지 않으면 `SESSION_EXPIRED` (409)가 반환된다.
+
+### 프론트엔드 구현 영향
+
+- **`HoldTimer`는 좌석별이 아니라 세션 단위로 하나만 둔다.** 가장 최근 hold 응답의 `expiresInSec`를 기준으로 카운트다운하며, 같은 세션에 속한 모든 좌석에 동일하게 적용한다.
+- **`ConfirmModal`은 클라이언트가 추적 중인 선택 좌석 목록을 보여주지만, 실제 확정 대상은 서버 세션 상태이며 요청에는 `showId`만 보낸다.** 다른 탭에서 취소하는 등 클라이언트 상태와 서버 세션이 어긋날 수 있으므로, confirm 실패 시 좌석 목록을 재조회(`invalidateQueries`)해 동기화한다.
+- **`SESSION_EXPIRED` 처리 추가**: confirm 호출이 이 에러로 실패하면 만료 안내 + 좌석 목록 재조회 + 선택 상태 초기화로 처리한다.
+- 좌석 HOLD 취소(`DELETE /api/seats/{seatId}/hold`)는 여전히 좌석 단위 호출이다. 세션의 마지막 좌석이 취소되면 세션 자체도 삭제되지만, 이는 서버에서 처리하므로 프론트가 별도로 대응할 필요는 없다.
+
+---
+
+## 12. 구현 순서
 
 ### 1단계 — 기반 세팅
 
@@ -545,21 +480,22 @@ export function useRequireAuth() {
 
 ### 3단계 — 좌석 조회
 
-- [ ] `src/entities/seat.ts` — Seat 타입 정의
-- [ ] `src/api/seat.api.ts` — getSeats API 함수
-- [ ] `src/features/seat/hooks/useSeats.ts` — polling 포함
-- [ ] `src/features/seat/components/SeatGrid.tsx`
-- [ ] `src/features/seat/components/SeatCard.tsx`
-- [ ] `src/app/shows/[showId]/seats/page.tsx`
+- [x] `src/entities/seat.ts` — Seat 타입 정의
+- [x] `src/api/seat.api.ts` — getSeats API 함수
+- [x] `src/features/seat/hooks/useSeats.ts` — polling 포함
+- [x] `src/features/seat/components/SeatsView.tsx` — 페이지 컨테이너 (로딩/에러/empty 상태 + 범례), `page.tsx`가 위임하는 실제 화면
+- [x] `src/features/seat/components/SeatGrid.tsx` — zone/row 단위로 그룹핑해 렌더링
+- [x] `src/features/seat/components/SeatCard.tsx`
+- [x] `src/app/shows/[showId]/seats/page.tsx` — 진입점만, `SeatsView`에 위임
 
-### 4단계 — HOLD + 예약 확정
+### 4단계 — HOLD + 예약 확정 (예매 세션 단위, §11 참고)
 
-- [ ] `src/api/seat.api.ts` — holdSeat, cancelHold 추가
-- [ ] `src/api/reservation.api.ts` — confirmReservation
+- [ ] `src/api/seat.api.ts` — holdSeat(seatId, showId), cancelHold(seatId, showId) 추가
+- [ ] `src/api/reservation.api.ts` — confirmReservation(showId) — `seatId` 없이 세션 전체 일괄 확정, 응답은 `reservedSeatIds: number[]`
 - [ ] `src/features/seat/hooks/useSeatHold.ts`
-- [ ] `src/features/seat/hooks/useReservationConfirm.ts`
-- [ ] `src/features/seat/components/HoldTimer.tsx` — 5분 카운트다운(만료 시 자동 cancel API 호출 여부 추후 결정)
-- [ ] `src/features/seat/components/ConfirmModal.tsx`
+- [ ] `src/features/seat/hooks/useReservationConfirm.ts` — `SESSION_EXPIRED` 에러 시 좌석 목록 재조회 + 선택 상태 초기화
+- [ ] `src/features/seat/components/HoldTimer.tsx` — 세션 단위 단일 카운트다운(좌석별 타이머 아님), 가장 최근 hold 응답의 `expiresInSec` 기준(만료 시 자동 cancel API 호출 여부 추후 결정)
+- [ ] `src/features/seat/components/ConfirmModal.tsx` — 클라이언트가 추적 중인 선택 좌석 목록 표시, 확정 요청에는 `showId`만 전송
 
 ### 5단계 — 내 예약 조회/취소
 
@@ -573,7 +509,7 @@ export function useRequireAuth() {
 
 ---
 
-## 12. 향후 확장 방향
+## 13. 향후 확장 방향
 
 ### 백엔드 API 미구현 항목 (현재)
 
@@ -595,7 +531,7 @@ export function useRequireAuth() {
 
 ---
 
-## 13. 개발 규칙 및 컨벤션
+## 14. 개발 규칙 및 컨벤션
 
 ### 파일/폴더 명명
 
@@ -696,7 +632,7 @@ chore: TanStack Query 의존성 추가
 
 ---
 
-## 14. 설계 근거
+## 15. 설계 근거
 
 ### "왜 Context가 아닌 Zustand인가"
 
