@@ -17,6 +17,7 @@
 8. [문제 해결 경험](#8-문제-해결-경험)
 9. [프로젝트를 통해 배운 점](#9-프로젝트를-통해-배운-점)
 10. [로컬 실행 방법](#10-로컬-실행-방법)
+11. [문서 구조](#11-문서-구조)
 
 ---
 
@@ -30,29 +31,33 @@
 
 이 프로젝트는 단순히 "예약 API를 만든다"가 아니라, **경쟁 상황에서 어떻게 데이터 정합성을 지킬 것인가**를 중심으로 설계했습니다.
 
-### 핵심 설계 방향
+### 아키텍쳐
+```
+┌─────────────────────┐        REST / JSON         ┌──────────────────────┐
+│   frontend (3001)   │ ────────────────────────▶ │    backend (8080)    │
+│   Next.js App Router│ ◀──────────────────────── │    Spring Boot       │
+└─────────────────────┘   accessToken: Body        └──────────┬───────────┘
+                        refreshToken: HttpOnly Cookie         │
+                                                              ├──▶ MySQL  (3307) — 회원, 좌석, 예약(RESERVED)
+                                                              └──▶ Redis  (6379) — 좌석 HOLD(예매 세션), Refresh Token 세션
+```
+- **인증**: JWT Access Token(30분, Body) + Opaque Refresh Token(14일, HttpOnly Cookie) + Rotation. 탈취 감지 시 해당 사용자의 전체 세션을 종료한다.
+- **좌석 선점**: 좌석을 누르면 개별로 HOLD되지만, 내부적으로는 `(showId, userId)` 단위의 **예매 세션**에 누적된다. 세션 하나에 최대 4석, TTL 300초를 공유한다.(나중에 추가한 좌석이 TTL을 새로 받지 않고 세션의 남은 시간을 상속받는다)
+- **예약 확정**: 좌석 1개씩이 아니라, 세션에 들어 있는 좌석 전체를 한 번에 일괄 확정한다.(all-or-nothing — 하나라도 중복 예약이면 전체 롤백)
 
-좌석 상태를 두 레이어로 분리해 **속도(Redis)** 와 **안전성(DB)** 을 동시에 확보했습니다.
-
-| 레이어 | 역할 | 기술 |
-|--------|------|------|
-| 1차 선점 | 빠른 원자적 선점, 실시간 상태 반영 | Redis SET NX + TTL |
-| 최종 확정 | 중복 예약 최후 방어, 영구 저장 | MySQL UNIQUE 제약 |
 
 ---
 
 ## 2. 기술 스택
 
-| 분류 | 기술 |
-|------|------|
-| **Backend** | Java 17, Spring Boot 4.0.2, Spring Security, Spring Data JPA |
-| **Database** | MySQL 8, Redis 7 |
-| **Frontend** | Next.js (App Router), React 19, TypeScript |
-| **상태관리** | Zustand, TanStack React Query v5 |
-| **UI / 폼** | TailwindCSS 4, React Hook Form, Zod |
-| **HTTP** | Axios (인터셉터 기반 자동 토큰 갱신) |
-| **인프라** | Docker Compose |
-| **빌드** | Gradle |
+| | Backend | Frontend |
+|---|---|---|
+| 언어/런타임 | Java 17 | TypeScript 5 |
+| 프레임워크 | Spring Boot 4.0.2 | Next.js 16 (App Router), React 19 |
+| 인증 | Spring Security + JJWT 0.12.6 | Zustand(메모리 토큰) + Axios Interceptor |
+| 데이터 | MySQL 8, Redis 7 | TanStack Query 5 (서버 상태) |
+| 폼 | Bean Validation | React Hook Form + Zod |
+| 빌드/테스트 | Gradle, JUnit 5 + MockMvc | npm, ESLint |
 
 ---
 
@@ -319,3 +324,39 @@ Access Token 저장 위치(메모리 vs localStorage), Refresh Token 형식(JWT 
 실제 Redis/MySQL 연결 기반 통합 테스트를 작성하면서, Mock이 감춰버리는 환경 차이로 인한 버그를 사전에 잡을 수 있다는 것을 경험했습니다.
 
 ---
+
+## 10. 로컬 실행 방법
+
+```bash
+# 1. MySQL + Redis 실행
+cd backend
+docker-compose up -d
+
+# 2. 백엔드 실행 (http://localhost:8080)
+./gradlew bootRun
+
+# 3. 프론트엔드 실행 (http://localhost:3001)
+cd ../frontend
+cp .env.example .env.local   # NEXT_PUBLIC_API_BASE_URL, PORT=3001
+npm install
+npm run dev
+```
+
+프론트엔드는 `PORT=3001`로 동작하도록 `.env.local`에 고정되어 있다 (백엔드 `cors.allowed-origins`가 `http://localhost:3001`만 허용).
+
+## 11. 문서 구조
+AI 에이전트(Claude Code 등)와 사람 모두를 위해, 코드와 같은 위치에 도메인별 문서를 둔다. 코드를 수정하면 같은 디렉토리의 문서도 함께 갱신한다.
+
+```
+backend/CLAUDE.md                              # 백엔드 공통 규칙 (기술스택, 패키지 구조, 코드/테스트 컨벤션)
+├── auth/CLAUDE.md                              # 인증 모듈 — 토큰 구조, Redis 세션, Rotation/탈취 감지
+└── seat/CLAUDE.md                              # 좌석/예약 모듈 — HOLD 구조, API 흐름, ErrorCode
+
+frontend/CLAUDE.md / AGENTS.md                  # 프론트 공통 규칙 (Next.js 버전 주의사항)
+frontend/FRONTEND.md                            # 프론트 전체 아키텍처 (폴더 구조, 상태 관리, 구현 순서)
+frontend/AUTH_FLOW.md                           # 인증 플로우 as-built 상세 (요청/응답 스키마, 다이어그램)
+```
+
+새 기능을 추가하거나 동작을 바꿀 때:
+1. 백엔드 도메인 로직 변경 → 해당 `auth/CLAUDE.md` 또는 `seat/CLAUDE.md` 갱신
+2. 프론트 인증/상태 관리 변경 → `FRONTEND.md` 또는 `AUTH_FLOW.md` 갱신
