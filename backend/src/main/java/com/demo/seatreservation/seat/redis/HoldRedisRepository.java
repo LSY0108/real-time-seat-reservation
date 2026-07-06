@@ -59,6 +59,39 @@ public class HoldRedisRepository {
                 """);
     }
 
+    // 결과 규약: -1 = HOLD_EXPIRED(좌석 키 없음), -2 = NOT_HOLD_OWNER, 0 = 성공
+    private static final DefaultRedisScript<Long> TRY_CANCEL_HOLD_SCRIPT;
+
+    static {
+        TRY_CANCEL_HOLD_SCRIPT = new DefaultRedisScript<>();
+        TRY_CANCEL_HOLD_SCRIPT.setResultType(Long.class);
+        TRY_CANCEL_HOLD_SCRIPT.setScriptText("""
+                local seatKey   = KEYS[1]
+                local bundleKey = KEYS[2]
+                local userId    = ARGV[1]
+                local seatId    = ARGV[2]
+
+                local owner = redis.call('GET', seatKey)
+                if not owner then
+                    return -1
+                end
+
+                if owner ~= userId then
+                    return -2
+                end
+
+                redis.call('DEL', seatKey)
+                redis.call('SREM', bundleKey, seatId)
+
+                local remaining = redis.call('SCARD', bundleKey)
+                if remaining == 0 then
+                    redis.call('DEL', bundleKey)
+                end
+
+                return 0
+                """);
+    }
+
     private final RedisTemplate<String, String> redisTemplate;
 
     public HoldRedisRepository(RedisTemplate<String, String> redisTemplate) {
@@ -67,16 +100,31 @@ public class HoldRedisRepository {
 
     /**
      * Lua 스크립트로 PTTL → SCARD → SET NX PX → SADD → (EXPIRE) 를 원자적으로 실행한다.
-     * 반환값: -1(4석 초과), -2(좌석 이미 선점됨), -3(예기치 않은 상태), >=0(성공, 잔여 TTL 초)
+     * maxSeats는 호출자가 계산해서 넘긴다 — 공연당 유저 평생 예약 상한(SeatHoldPolicy.MAX_SEATS_PER_SHOW)에서
+     * 이미 확정된 예약 수를 뺀 "이번 세션에서 허용되는 잔여 좌석 수"이며, 세션마다 고정된 4가 아니다.
+     * 반환값: -1(정원 초과), -2(좌석 이미 선점됨), -3(예기치 않은 상태), >=0(성공, 잔여 TTL 초)
      */
     public long executeTryHold(String bundleKey, String seatKey,
-                               String userId, String seatId, long bundleTtlSec) {
+                               String userId, String seatId, long maxSeats, long bundleTtlSec) {
         Long result = redisTemplate.execute(
                 TRY_HOLD_SCRIPT,
                 List.of(bundleKey, seatKey),
-                userId, seatId, "4", String.valueOf(bundleTtlSec)
+                userId, seatId, String.valueOf(maxSeats), String.valueOf(bundleTtlSec)
         );
         return result == null ? -3L : result;
+    }
+
+    /**
+     * Lua 스크립트로 GET owner → 소유자 검증 → DEL seatKey → SREM bundle → SCARD → (DEL bundle) 을 원자적으로 실행한다.
+     * 반환값: -1(HOLD_EXPIRED, 좌석 키 없음), -2(NOT_HOLD_OWNER), 0(성공)
+     */
+    public long executeTryCancelHold(String seatKey, String bundleKey, String userId, String seatId) {
+        Long result = redisTemplate.execute(
+                TRY_CANCEL_HOLD_SCRIPT,
+                List.of(seatKey, bundleKey),
+                userId, seatId
+        );
+        return result == null ? -1L : result;
     }
 
     /** bundle 잔여 TTL(ms). 키 없음 → -2, TTL 없음 → -1 */
@@ -87,14 +135,6 @@ public class HoldRedisRepository {
 
     public Set<String> getBundleSeatIds(String bundleKey) {
         return redisTemplate.opsForSet().members(bundleKey);
-    }
-
-    public Long getBundleSize(String bundleKey) {
-        return redisTemplate.opsForSet().size(bundleKey);
-    }
-
-    public void removeFromBundle(String bundleKey, Long seatId) {
-        redisTemplate.opsForSet().remove(bundleKey, String.valueOf(seatId));
     }
 
     public void deleteBundle(String bundleKey) {
