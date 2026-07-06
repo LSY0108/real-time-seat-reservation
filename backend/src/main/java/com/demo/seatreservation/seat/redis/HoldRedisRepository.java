@@ -59,6 +59,39 @@ public class HoldRedisRepository {
                 """);
     }
 
+    // 결과 규약: -1 = HOLD_EXPIRED(좌석 키 없음), -2 = NOT_HOLD_OWNER, 0 = 성공
+    private static final DefaultRedisScript<Long> TRY_CANCEL_HOLD_SCRIPT;
+
+    static {
+        TRY_CANCEL_HOLD_SCRIPT = new DefaultRedisScript<>();
+        TRY_CANCEL_HOLD_SCRIPT.setResultType(Long.class);
+        TRY_CANCEL_HOLD_SCRIPT.setScriptText("""
+                local seatKey   = KEYS[1]
+                local bundleKey = KEYS[2]
+                local userId    = ARGV[1]
+                local seatId    = ARGV[2]
+
+                local owner = redis.call('GET', seatKey)
+                if not owner then
+                    return -1
+                end
+
+                if owner ~= userId then
+                    return -2
+                end
+
+                redis.call('DEL', seatKey)
+                redis.call('SREM', bundleKey, seatId)
+
+                local remaining = redis.call('SCARD', bundleKey)
+                if remaining == 0 then
+                    redis.call('DEL', bundleKey)
+                end
+
+                return 0
+                """);
+    }
+
     private final RedisTemplate<String, String> redisTemplate;
 
     public HoldRedisRepository(RedisTemplate<String, String> redisTemplate) {
@@ -79,6 +112,19 @@ public class HoldRedisRepository {
         return result == null ? -3L : result;
     }
 
+    /**
+     * Lua 스크립트로 GET owner → 소유자 검증 → DEL seatKey → SREM bundle → SCARD → (DEL bundle) 을 원자적으로 실행한다.
+     * 반환값: -1(HOLD_EXPIRED, 좌석 키 없음), -2(NOT_HOLD_OWNER), 0(성공)
+     */
+    public long executeTryCancelHold(String seatKey, String bundleKey, String userId, String seatId) {
+        Long result = redisTemplate.execute(
+                TRY_CANCEL_HOLD_SCRIPT,
+                List.of(seatKey, bundleKey),
+                userId, seatId
+        );
+        return result == null ? -1L : result;
+    }
+
     /** bundle 잔여 TTL(ms). 키 없음 → -2, TTL 없음 → -1 */
     public long getBundleRemainingTtlMs(String bundleKey) {
         Long ttl = redisTemplate.getExpire(bundleKey, TimeUnit.MILLISECONDS);
@@ -87,14 +133,6 @@ public class HoldRedisRepository {
 
     public Set<String> getBundleSeatIds(String bundleKey) {
         return redisTemplate.opsForSet().members(bundleKey);
-    }
-
-    public Long getBundleSize(String bundleKey) {
-        return redisTemplate.opsForSet().size(bundleKey);
-    }
-
-    public void removeFromBundle(String bundleKey, Long seatId) {
-        redisTemplate.opsForSet().remove(bundleKey, String.valueOf(seatId));
     }
 
     public void deleteBundle(String bundleKey) {

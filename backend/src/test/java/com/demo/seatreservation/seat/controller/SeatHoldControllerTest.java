@@ -318,6 +318,59 @@ class SeatHoldControllerTest {
     }
 
     @Test
+    void cancelHold_middleSeat_bundleKeepsRemainingMembers() throws Exception {
+        // 3석 hold 후 그중 1석만 취소 → 취소한 seat 키만 삭제되고 bundle은 나머지 2석을 유지한 채 살아있어야 한다
+        User user = saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+
+        long showId = 1L;
+        List<Seat> seats = createSeats(showId, 3);
+        String bundleKey = HoldKey.bundleOf(showId, user.getId());
+
+        for (Seat seat : seats) {
+            mockMvc.perform(post("/api/seats/{seatId}/hold", seat.getId())
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"showId": %d}
+                                    """.formatted(showId)))
+                    .andExpect(status().isOk());
+        }
+
+        Long canceledSeatId = seats.get(0).getId();
+        String canceledSeatKey = HoldKey.of(showId, canceledSeatId);
+
+        mockMvc.perform(delete("/api/seats/{seatId}/hold", canceledSeatId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("AVAILABLE"));
+
+        // 취소한 좌석 키는 삭제됨
+        Assertions.assertNull(stringRedisTemplate.opsForValue().get(canceledSeatKey));
+
+        // bundle은 삭제되지 않고 나머지 2석을 그대로 유지
+        Set<String> remainingMembers = stringRedisTemplate.opsForSet().members(bundleKey);
+        Assertions.assertNotNull(remainingMembers);
+        Assertions.assertEquals(2, remainingMembers.size());
+        Assertions.assertFalse(remainingMembers.contains(String.valueOf(canceledSeatId)));
+        Assertions.assertTrue(remainingMembers.contains(String.valueOf(seats.get(1).getId())));
+        Assertions.assertTrue(remainingMembers.contains(String.valueOf(seats.get(2).getId())));
+
+        // 남은 좌석들의 키는 그대로 유지
+        Assertions.assertNotNull(stringRedisTemplate.opsForValue().get(HoldKey.of(showId, seats.get(1).getId())));
+        Assertions.assertNotNull(stringRedisTemplate.opsForValue().get(HoldKey.of(showId, seats.get(2).getId())));
+
+        // bundle 키 자체는 살아있어야 한다 (TTL 보유)
+        Long bundleTtl = stringRedisTemplate.getExpire(bundleKey, TimeUnit.SECONDS);
+        Assertions.assertNotNull(bundleTtl);
+        Assertions.assertTrue(bundleTtl > 0);
+    }
+
+    @Test
     void cancelHold_notOwner_returns403() throws Exception {
         saveUser("user1@test.com");
         saveUser("user2@test.com");
