@@ -41,6 +41,13 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     List<Reservation> findByUserIdAndStatus(Long userId, ReservationStatus status);
 
     /**
+     * 특정 공연(showId)에서 특정 사용자(userId)의 상태별 예약 개수
+     * → 공연당 유저 최대 예약 좌석 수(SeatHoldPolicy.MAX_SEATS_PER_SHOW) 제한 판단용.
+     *   HOLD 세션 단위가 아니라 확정된(RESERVED) 예약 전체를 기준으로 하는 평생 제한이다.
+     */
+    long countByShowIdAndUserIdAndStatus(Long showId, Long userId, ReservationStatus status);
+
+    /**
      * 특정 사용자의 모든 예약 조회
      * → 내 예약 조회 기본 (예약 확정, 예약 취소 둘 다 나옴)
      */
