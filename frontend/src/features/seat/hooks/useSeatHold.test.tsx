@@ -148,4 +148,56 @@ describe('useSeatHold', () => {
       resolveHold({ seatId: 1, showId: 1, status: 'HELD', expiresInSec: 300 });
     });
   });
+
+  it('HOLD 성공 시 expiresAt이 설정되고, 마지막 좌석을 해제하면 expiresAt이 초기화된다', async () => {
+    vi.mocked(holdSeatApi).mockResolvedValue({
+      seatId: 1,
+      showId: 1,
+      status: 'HELD',
+      expiresInSec: 300,
+    });
+    vi.mocked(cancelHoldApi).mockResolvedValue({
+      seatId: 1,
+      showId: 1,
+      status: 'AVAILABLE',
+    });
+
+    const before = Date.now();
+    const { result } = renderHook(() => useSeatHold({ showId: 1 }), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.toggleSeat(seat);
+    });
+    await waitFor(() => expect(result.current.expiresAt).not.toBeNull());
+    expect(result.current.expiresAt as number).toBeGreaterThanOrEqual(before + 300_000);
+
+    act(() => {
+      result.current.toggleSeat(seat);
+    });
+    await waitFor(() => expect(result.current.selectedSeatIds).not.toContain(1));
+    expect(result.current.expiresAt).toBeNull();
+  });
+
+  it('clearSelection 호출 시 선택된 좌석과 expiresAt이 모두 초기화된다', async () => {
+    vi.mocked(holdSeatApi).mockResolvedValue({
+      seatId: 1,
+      showId: 1,
+      status: 'HELD',
+      expiresInSec: 300,
+    });
+
+    const { result } = renderHook(() => useSeatHold({ showId: 1 }), { wrapper: createWrapper() });
+
+    act(() => {
+      result.current.toggleSeat(seat);
+    });
+    await waitFor(() => expect(result.current.selectedSeatIds).toContain(1));
+
+    act(() => {
+      result.current.clearSelection();
+    });
+
+    await waitFor(() => expect(result.current.expiresAt).toBeNull());
+    expect(result.current.selectedSeatIds).toEqual([]);
+  });
 });
