@@ -526,7 +526,7 @@ export function useRequireAuth() {
 |------|------|
 | HOLD 단위 | 좌석은 API 호출 자체는 개별(`POST /api/seats/{seatId}/hold`)이지만, 서버에서 (showId, userId) 세션에 누적된다 |
 | 세션 TTL | 세션 최초 생성 시 300초 고정. 이후 추가되는 좌석은 **세션의 남은 TTL을 그대로 상속** (리셋되지 않음) |
-| 세션당 최대 좌석 수 | 4석 (초과 시 `HOLD_LIMIT_EXCEEDED`, 409) |
+| 공연당 유저 최대 예약 좌석 수 | 4석. **세션 단위가 아니라 평생(전체) 제한** — confirm으로 세션이 끝나도 유지되므로, 이미 4석을 확정한 유저는 새 세션을 열어도 더 이상 hold할 수 없다 (초과 시 `HOLD_LIMIT_EXCEEDED`, 409) |
 | 예약 확정 요청 | `{ showId }`만 전송 (세션 전체 일괄 확정) |
 | 예약 확정 응답 | `reservedSeatIds: number[]` 배열 |
 | 세션 만료/부재 에러 | `SESSION_EXPIRED` (409) |
@@ -548,12 +548,27 @@ export function useRequireAuth() {
   - `toggleSeat(seat)` — `selectedSeatIds.includes(seat.seatId)` 여부로 hold/cancel mutation을 선택해 실행
   - HOLD/취소 성공·실패 모두 `invalidateQueries(['seats', showId])`로 실서버 상태를 재조회한다 — 특히 **DELETE 성공 후에는 이 재조회를 통해 좌석이 AVAILABLE로 보이게 된다** (프론트가 상태를 직접 조작하지 않음)
   - HOLD 실패(409 `SEAT_ALREADY_HELD`/`HOLD_LIMIT_EXCEEDED`/`SESSION_EXPIRED` 등)는 일반 mutation 에러와 동일하게 처리 — `selectedSeatIds`에 추가하지 않고 에러 메시지만 노출
+  - `expiresAt: number | null` — 세션 만료 시각(epoch ms). HOLD 성공 시 `Date.now() + expiresInSec * 1000`으로 계산해 저장하며, `selectedSeatIds`가 비면(마지막 좌석 해제) 렌더 시점에 자동으로 `null`로 파생된다 — 별도 effect로 동기화하지 않음
+  - `clearSelection()` — 예약 확정 성공/세션 만료 시 선택 상태를 통째로 초기화
 - **서버가 내려주는 좌석 `status`(HELD)만으로는 "내가 선택한 좌석"과 "남이 HOLD 중인 좌석"을 구분할 수 없다** — 둘 다 동일하게 `HELD`로 조회된다. `SeatCard`는 `isSelected`(=`selectedSeatIds`에 포함 여부)를 서버 `status`보다 우선해 스타일/클릭 가능 여부를 계산한다:
   - `RESERVED` → 항상 클릭 불가
   - `isSelected === true` → `status`와 무관하게 클릭 가능 (재클릭 시 해제), 선택됨 스타일로 표시
   - `isSelected === false` && `status === 'HELD'` → 클릭 불가 (남이 선점 중)
   - 그 외(`AVAILABLE`) → 클릭 가능
-- `HoldTimer`를 붙일 경우 좌석별이 아니라 세션 단위로 하나만 둔다 — 세션 전체가 하나의 만료 시각을 공유하기 때문 (아직 미구현, §12 참고).
+- `HoldTimer`는 좌석별이 아니라 세션 단위로 하나만 둔다 — 세션 전체가 하나의 만료 시각을 공유하기 때문. `useSeatHold`의 `expiresAt`을 그대로 prop으로 받아 1초마다 남은 시간을 표시하고, 시각을 지나면 `onExpire` 콜백을 정확히 1회 호출한다 (재렌더로 effect가 여러 번 실행돼도 `ref` 가드로 중복 호출 방지)
+
+### 예약 확정 — 세션 전체 일괄 확정
+
+```
+POST /api/reservations/confirm  { showId }
+  └─ 응답: { showId, reservedSeatIds: number[], status: "RESERVED" }
+```
+
+- 구현: `src/api/reservation.api.ts`의 `confirmReservationApi(showId)` + `src/features/seat/hooks/useReservationConfirm.ts`
+  - `confirm()` — 확정 mutation 실행. 성공/실패 모두 `invalidateQueries(['seats', showId])`로 좌석 목록을 재조회한다
+  - `SESSION_EXPIRED`(409)는 `errorMessage`로 노출하지 않고 `onSessionExpired` 콜백만 호출한다 — 호출부(`SeatsView`)가 이 콜백에서 `clearSelection()` + 안내 메시지 표시를 담당
+  - 그 외 실패(예: 확정 시도 중 다른 좌석이 먼저 `RESERVED`되어 버린 `ALREADY_RESERVED`)는 `errorMessage`로 노출해 `ConfirmModal`이 닫히지 않고 사용자가 상황을 보고 재시도/취소를 선택할 수 있게 한다
+- `ConfirmModal`(`src/features/seat/components/ConfirmModal.tsx`)은 `useSeatHold`가 들고 있는 `selectedSeatIds`에 해당하는 `Seat` 객체 목록을 표시만 할 뿐, 확정 요청 자체에는 `seatId`를 보내지 않는다 — 실제 확정 대상은 서버 세션(bundle) 상태이기 때문
 
 ---
 
@@ -602,10 +617,11 @@ export function useRequireAuth() {
 - [x] `src/features/seat/components/SeatCard.tsx` — `isSelected`/`isPending` 반영, 선택 시 재클릭으로 해제 가능하도록 클릭 가능 로직 변경
 - [x] `src/features/seat/components/SeatGrid.tsx` — `selectedSeatIds`/`pendingSeatIds`를 `SeatCard`로 전달
 - [x] `src/features/seat/components/SeatsView.tsx` — `useSeatHold` 연결, 선택됨 범례 추가, 에러 메시지 표시
-- [ ] `src/api/reservation.api.ts` — confirmReservation (`{ showId }`만 전송, 세션 전체 일괄 확정)
-- [ ] `src/features/seat/hooks/useReservationConfirm.ts` — `SESSION_EXPIRED` 에러 시 좌석 목록 재조회 + 선택 상태 초기화
-- [ ] `src/features/seat/components/HoldTimer.tsx` — 세션 단위 단일 카운트다운(좌석별 타이머 아님)
-- [ ] `src/features/seat/components/ConfirmModal.tsx` — `selectedSeatIds` 기준으로 선택 좌석 표시, 확정 요청은 `{ showId }`만 전송
+- [x] `src/api/reservation.api.ts` — `confirmReservationApi(showId)` (`{ showId }`만 전송, 세션 전체 일괄 확정)
+- [x] `src/features/seat/hooks/useReservationConfirm.ts` — `SESSION_EXPIRED` 에러 시 `onSessionExpired` 콜백으로 좌석 목록 재조회 + 선택 상태 초기화, 그 외 에러는 `errorMessage`로 노출
+- [x] `src/features/seat/components/HoldTimer.tsx` — 세션 단위 단일 카운트다운(좌석별 타이머 아님), 만료 시 `onExpire` 콜백
+- [x] `src/features/seat/components/ConfirmModal.tsx` — `selectedSeatIds` 기준으로 선택 좌석 표시, 확정 요청은 `{ showId }`만 전송
+- [x] `src/shared/utils/errorMessage.ts` — `useSeatHold`/`useReservationConfirm`이 공유하는 에러 메시지 추출 유틸
 
 ### 5단계 — 내 예약 조회/취소
 
