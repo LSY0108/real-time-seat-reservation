@@ -462,6 +462,116 @@ class SeatHoldControllerTest {
     }
 
     @Test
+    void hold_afterConfirmingFourSeats_newSessionCannotHoldMore_returns409() throws Exception {
+        // 4석을 hold → confirm으로 확정 → 새 세션에서 다른 좌석을 hold해도 평생 상한(4석)에 걸려 실패해야 한다
+        saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+
+        long showId = 1L;
+        List<Seat> seats = createSeats(showId, 5);
+        List<Long> firstFour = seats.subList(0, 4).stream().map(Seat::getId).toList();
+
+        for (Long seatId : firstFour) {
+            mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"showId": %d}
+                                    """.formatted(showId)))
+                    .andExpect(status().isOk());
+        }
+
+        mockMvc.perform(post("/api/reservations/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isOk());
+
+        Long fifthSeatId = seats.get(4).getId();
+
+        mockMvc.perform(post("/api/seats/{seatId}/hold", fifthSeatId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("HOLD_LIMIT_EXCEEDED"));
+    }
+
+    @Test
+    void hold_userAlreadyReservedTwoSeats_onlyTwoMoreCanBeHeldInNewSession() throws Exception {
+        // 유저가 이 공연에서 이미 2석을 확정 예약한 상태 → 새 세션에서는 2석까지만 hold 가능, 3번째는 실패
+        User user = saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+
+        long showId = 1L;
+        List<Seat> seats = createSeats(showId, 5);
+
+        for (int i = 0; i < 2; i++) {
+            reservationRepository.save(
+                    Reservation.builder()
+                            .showId(showId)
+                            .seatId(seats.get(i).getId())
+                            .userId(user.getId())
+                            .status(ReservationStatus.RESERVED)
+                            .build()
+            );
+        }
+
+        for (int i = 2; i < 4; i++) {
+            mockMvc.perform(post("/api/seats/{seatId}/hold", seats.get(i).getId())
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"showId": %d}
+                                    """.formatted(showId)))
+                    .andExpect(status().isOk());
+        }
+
+        mockMvc.perform(post("/api/seats/{seatId}/hold", seats.get(4).getId())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("HOLD_LIMIT_EXCEEDED"));
+    }
+
+    @Test
+    void hold_userAlreadyReservedMaxSeats_newSessionCannotHoldAny_returns409() throws Exception {
+        // 유저가 이 공연에서 이미 4석(상한)을 확정 예약한 상태 → 새 세션에서는 1석도 hold 불가
+        User user = saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+
+        long showId = 1L;
+        List<Seat> seats = createSeats(showId, 5);
+
+        for (int i = 0; i < 4; i++) {
+            reservationRepository.save(
+                    Reservation.builder()
+                            .showId(showId)
+                            .seatId(seats.get(i).getId())
+                            .userId(user.getId())
+                            .status(ReservationStatus.RESERVED)
+                            .build()
+            );
+        }
+
+        mockMvc.perform(post("/api/seats/{seatId}/hold", seats.get(4).getId())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("HOLD_LIMIT_EXCEEDED"));
+    }
+
+    @Test
     void hold_afterCancel_canHoldAgain() throws Exception {
         // 4석 hold 후 1석 cancel → 5번째 hold 성공
         saveUser("user@test.com");

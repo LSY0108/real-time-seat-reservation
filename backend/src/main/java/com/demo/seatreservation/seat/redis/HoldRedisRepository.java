@@ -100,14 +100,16 @@ public class HoldRedisRepository {
 
     /**
      * Lua 스크립트로 PTTL → SCARD → SET NX PX → SADD → (EXPIRE) 를 원자적으로 실행한다.
-     * 반환값: -1(4석 초과), -2(좌석 이미 선점됨), -3(예기치 않은 상태), >=0(성공, 잔여 TTL 초)
+     * maxSeats는 호출자가 계산해서 넘긴다 — 공연당 유저 평생 예약 상한(SeatHoldPolicy.MAX_SEATS_PER_SHOW)에서
+     * 이미 확정된 예약 수를 뺀 "이번 세션에서 허용되는 잔여 좌석 수"이며, 세션마다 고정된 4가 아니다.
+     * 반환값: -1(정원 초과), -2(좌석 이미 선점됨), -3(예기치 않은 상태), >=0(성공, 잔여 TTL 초)
      */
     public long executeTryHold(String bundleKey, String seatKey,
-                               String userId, String seatId, long bundleTtlSec) {
+                               String userId, String seatId, long maxSeats, long bundleTtlSec) {
         Long result = redisTemplate.execute(
                 TRY_HOLD_SCRIPT,
                 List.of(bundleKey, seatKey),
-                userId, seatId, "4", String.valueOf(bundleTtlSec)
+                userId, seatId, String.valueOf(maxSeats), String.valueOf(bundleTtlSec)
         );
         return result == null ? -3L : result;
     }
