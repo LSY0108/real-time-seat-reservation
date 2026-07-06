@@ -45,9 +45,9 @@ Next.js 기반 공연 좌석 예매 서비스 프론트엔드 아키텍처 문�
 | POST | `/api/auth/logout` | 필요 | 현재 세션 로그아웃 |
 | POST | `/api/auth/logout-all` | 필요 | 전체 세션 로그아웃 |
 | GET | `/api/seats?showId=` | 불필요 | 좌석 실시간 상태 조회 |
-| POST | `/api/seats/{seatId}/hold` | 필요 | 좌석 HOLD |
+| POST | `/api/seats/{seatId}/hold` | 필요 | 좌석 HOLD (예매 세션에 누적) |
 | DELETE | `/api/seats/{seatId}/hold` | 필요 | HOLD 취소 |
-| POST | `/api/reservations/confirm` | 필요 | 예약 확정 |
+| POST | `/api/reservations/confirm` | 필요 | 예매 세션 내 HOLD된 좌석 전체 일괄 확정 |
 | GET | `/api/me/reservations?status=` | 필요 | 내 예약 조회 |
 | POST | `/api/reservations/{reservationId}/cancel` | 필요 | 예약 취소 |
 
@@ -130,7 +130,7 @@ src/
 │   │   ├── hooks/              # useLogin, useSignup, useLogout, useLogoutAll
 │   │   └── schemas/            # auth.schema.ts (Zod)
 │   ├── seat/
-│   │   ├── components/         # SeatGrid, SeatCard, HoldTimer, ConfirmModal
+│   │   ├── components/         # SeatsView, SeatGrid, SeatCard, HoldTimer, ConfirmModal
 │   │   ├── hooks/              # useSeats, useSeatHold, useReservationConfirm
 │   │   └── schemas/
 │   └── reservation/
@@ -195,53 +195,14 @@ src/
 
 ## 4. Auth 아키텍처
 
+> 회원가입/로그인/새로고침 복구/로그아웃의 단계별 흐름, 다이어그램, 파일별 역할은 **[AUTH_FLOW.md](./AUTH_FLOW.md)가 기준 문서**다. 아래는 다른 섹션(§7, §9, §14)에서 참조하는 핵심 구조만 요약한다.
+
 ### 토큰 저장 전략
 
 | 토큰 | 저장 위치 | 이유 |
 |------|-----------|------|
 | Access Token (JWT, 30분) | Zustand 메모리 | XSS 방어. localStorage는 스크립트로 탈취 가능 |
 | Refresh Token (Opaque, 14일) | HttpOnly Cookie | JS에서 접근 불가. 서버만 읽을 수 있음 |
-
-### 상태별 흐름
-
-**1. 최초 로그인**
-
-```
-POST /api/auth/login
-  └─ 응답: accessToken (body) + refreshToken (Set-Cookie)
-        └─ accessToken → useAuthStore.setAuth(token, user)
-        └─ refreshToken → 브라우저가 HttpOnly Cookie로 자동 저장
-```
-
-**2. 페이지 새로고침 / 첫 진입 (토큰 없음)**
-
-```
-useRequireAuth() 훅 실행
-  └─ accessToken이 없음
-        └─ POST /api/auth/refresh (쿠키 자동 전송)
-              ├─ 성공: 새 accessToken → useAuthStore.setAuth()
-              └─ 실패: clearAuth() → /login 리다이렉트
-```
-
-**3. 인증 필요 API 호출**
-
-```
-axiosInstance 요청
-  └─ request interceptor: Authorization: Bearer {accessToken} 자동 주입
-        └─ 정상 응답: 그대로 반환
-        └─ 401: response interceptor → refresh 흐름 진입
-```
-
-**4. 로그아웃**
-
-```
-POST /api/auth/logout (현재 세션)
-또는
-POST /api/auth/logout-all (전체 세션)
-  └─ 응답 쿠키 만료 처리 (서버)
-        └─ useAuthStore.clearAuth() → accessToken, user = null
-              └─ /login 리다이렉트
-```
 
 ### authStore 구조
 
@@ -261,102 +222,31 @@ interface AuthStore {
   setAuth: (token: string, user: User) => void;
   setAccessToken: (token: string) => void;
   clearAuth: () => void;
+  isAuthenticated: () => boolean;
 }
 ```
-인증 여부는 !!accessToken으로 직접 판단한다.
 
-**persist는 사용하지 않는다.** accessToken은 의도적으로 새로고침 시 초기화되어야 하며, 이후 refresh 쿠키로 복원된다.
+**persist는 사용하지 않는다.** accessToken은 의도적으로 새로고침 시 초기화되어야 하며, 이후 refresh 쿠키로 복원된다. 상세 복구 흐름은 AUTH_FLOW.md §1-7 참고.
 
 ---
 
-## 5. Axios Interceptor 흐름
+## 5. Axios Interceptor 흐름 (요약)
 
-```
-API 요청 발생
-  │
-  ▼
-[Request Interceptor]
-  └─ useAuthStore.getState().accessToken 읽기
-  └─ headers.Authorization = `Bearer ${token}` 주입
-  │
-  ▼
-서버 요청
-  │
-  ├─ 정상 응답 (2xx) → 그대로 반환
-  │
-  └─ 에러 응답
-        ├─ 401이 아닌 경우 → 그대로 reject
-        └─ 401인 경우
-              ├─ /api/auth/refresh 요청 자체가 401 → clearAuth() + /login
-              └─ 일반 API 401 → [Response Interceptor] → refresh 흐름
-```
+`src/lib/axios.ts`의 request/response 인터셉터가 인증 헤더 주입과 401 처리를 전담한다. 전체 다이어그램과 `NO_REFRESH_PATHS`(로그인/회원가입 401은 refresh 없이 그대로 reject) 처리 로직은 **[AUTH_FLOW.md §1-5](./AUTH_FLOW.md#1-5-accesstoken-만료-시-refresh-흐름)** 참고.
 
-### 핵심 구현 포인트
-
-- `originalRequest._retry` 플래그로 무한 retry 방지
-- `withCredentials: true` 설정 필수 (refreshToken HttpOnly Cookie 자동 전송)
-- refresh 요청 URL 포함 여부 확인으로 무한 루프 차단
-  - refresh retry 제외 대상:
-    - /api/auth/login
-    - /api/auth/signup
-    - /api/auth/refresh
+핵심만 요약:
+- request interceptor: `useAuthStore.getState().accessToken`을 읽어 `Authorization: Bearer {token}` 자동 주입
+- response interceptor: 401 발생 시 refresh 흐름 진입 (`originalRequest._retry` 플래그로 무한 retry 방지)
+- `withCredentials: true` 필수 (refreshToken 쿠키 자동 전송)
+- `/api/auth/login`, `/api/auth/signup`, `/api/auth/refresh`는 refresh retry 대상에서 제외 (무한 루프 및 폼 에러 메시지 소실 방지)
 
 ---
 
-## 6. Refresh Retry 흐름
+## 6. Refresh Retry 흐름 (요약)
 
-### 단일 요청 401 흐름
+백엔드가 Refresh Token Rotation을 사용하므로, 동시에 여러 요청이 401이 되어도 refresh는 단 한 번만 호출해야 한다. `isRefreshing` 플래그 + `subscribers` 콜백 큐로 보장한다 — 첫 401이 refresh를 실행하고, 이후 401들은 큐에 대기했다가 완료 후 새 토큰으로 일괄 재시도한다.
 
-```
-API 요청 → 401
-  └─ _retry 플래그 false 확인
-        └─ isRefreshing = true 설정
-              └─ POST /api/auth/refresh (쿠키 자동 전송)
-                    ├─ 성공: 새 accessToken → setAccessToken()
-                    │         originalRequest 재시도 (새 토큰 사용)
-                    └─ 실패: clearAuth() + /login 리다이렉트
-```
-
-### 동시 다중 401 흐름 (Refresh Token Rotation 대응)
-
-백엔드가 Refresh Token Rotation을 사용하므로, 동시 401이 발생하면 반드시 하나의 refresh만 호출해야 한다. 여러 번 호출 시 두 번째 요청부터 `INVALID_REFRESH_TOKEN`으로 실패한다.
-
-```
-요청 A, B, C 동시에 401 발생
-  │
-  ├─ 요청 A: isRefreshing = false → refresh 실행 시작, isRefreshing = true
-  │
-  ├─ 요청 B: isRefreshing = true → subscribers 배열에 콜백 등록 후 대기
-  │
-  ├─ 요청 C: isRefreshing = true → subscribers 배열에 콜백 등록 후 대기
-  │
-  └─ 요청 A refresh 완료
-        └─ notifySubscribers(newToken) 호출
-              ├─ 요청 B 재시도 (새 토큰)
-              └─ 요청 C 재시도 (새 토큰)
-```
-
-이 패턴이 없으면 A, B, C 모두 개별로 refresh를 호출하고, B와 C는 토큰 불일치로 실패한다.
-
-```typescript
-// src/lib/axios.ts 핵심 구조
-let isRefreshing = false;
-let subscribers: Array<(token: string) => void> = [];
-
-// 401 처리
-if (isRefreshing) {
-  // 대기 후 재시도
-  return new Promise((resolve) => {
-    subscribers.push((token) => {
-      originalRequest.headers.Authorization = `Bearer ${token}`;
-      resolve(axiosInstance(originalRequest));
-    });
-  });
-}
-
-isRefreshing = true;
-// ... refresh 실행 후 notifySubscribers()
-```
+전체 시퀀스 다이어그램과 구현 코드는 **[AUTH_FLOW.md §1-5, §3](./AUTH_FLOW.md#3-설계-포인트)** 참고.
 
 ---
 
