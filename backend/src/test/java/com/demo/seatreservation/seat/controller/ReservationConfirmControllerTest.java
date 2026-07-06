@@ -334,4 +334,66 @@ public class ReservationConfirmControllerTest {
                 showId, seatB.getId(), ReservationStatus.RESERVED);
         Assertions.assertFalse(seatBReserved, "seatB는 예약되지 않아야 한다");
     }
+
+    /**
+     * 테스트 목적:
+     * HOLD 시점에는 이미 잔여 허용량만큼만 bundle에 담기도록 막지만, confirm 시점에도
+     * 공연당 유저 평생 예약 상한(4석)을 한 번 더 방어적으로 검사해야 한다.
+     * 이 테스트는 그 방어 로직을 직접 검증하기 위해, HOLD API를 거치지 않고
+     * setupBundle로 상한을 초과하는 bundle 상태를 강제로 만든 뒤 confirm을 호출한다.
+     *
+     * 기대 결과:
+     * - 이미 2석을 확정 예약한 유저의 bundle에 3석이 더 있으면(합계 5석) confirm은
+     *   HOLD_LIMIT_EXCEEDED(409)로 실패해야 한다.
+     * - all-or-nothing: 새로 저장되는 예약이 하나도 없어야 한다 (기존 2건만 유지).
+     */
+    @Test
+    void confirmAll_exceedsLifetimeLimitPerShow_returns409_andSavesNothing() throws Exception {
+        User user = saveUser("confirm@test.com");
+        String token = loginAndGetToken("confirm@test.com");
+
+        Long showId = 1L;
+        List<Seat> seats = List.of(
+                createSeat(showId, 1),
+                createSeat(showId, 2),
+                createSeat(showId, 3),
+                createSeat(showId, 4),
+                createSeat(showId, 5)
+        );
+
+        // 이미 2석(seat 1, 2) 확정 예약된 상태
+        reservationRepository.save(
+                Reservation.builder()
+                        .seatId(seats.get(0).getId())
+                        .showId(showId)
+                        .userId(user.getId())
+                        .status(ReservationStatus.RESERVED)
+                        .build()
+        );
+        reservationRepository.save(
+                Reservation.builder()
+                        .seatId(seats.get(1).getId())
+                        .showId(showId)
+                        .userId(user.getId())
+                        .status(ReservationStatus.RESERVED)
+                        .build()
+        );
+
+        // HOLD API를 거치지 않고 bundle에 3석(seat 3, 4, 5)을 강제로 채움 → 합계 5석
+        List<Long> bundleSeatIds = List.of(seats.get(2).getId(), seats.get(3).getId(), seats.get(4).getId());
+        setupBundle(showId, user.getId(), bundleSeatIds);
+
+        mockMvc.perform(post("/api/reservations/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("HOLD_LIMIT_EXCEEDED"));
+
+        // 기존 2건만 남아있고, bundle의 3석은 하나도 저장되지 않아야 한다
+        Assertions.assertEquals(2L, reservationRepository.count(),
+                "평생 상한 초과 시 confirm은 아무 것도 저장하지 않아야 한다");
+    }
 }

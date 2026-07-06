@@ -5,10 +5,17 @@ import { SeatCard } from './SeatCard';
 
 interface SeatGridProps {
   seats: Seat[];
+  selectedSeatIds?: number[];
+  pendingSeatIds?: Set<number>;
   onSeatClick?: (seat: Seat) => void;
 }
 
-export function SeatGrid({ seats, onSeatClick }: SeatGridProps) {
+export function SeatGrid({
+  seats,
+  selectedSeatIds = [],
+  pendingSeatIds,
+  onSeatClick,
+}: SeatGridProps) {
   const byZone = seats.reduce<Record<string, Seat[]>>((acc, seat) => {
     (acc[seat.zone] ??= []).push(seat);
     return acc;
@@ -39,7 +46,13 @@ export function SeatGrid({ seats, onSeatClick }: SeatGridProps) {
                         {byRow[Number(row)]
                           .sort((a, b) => a.number - b.number)
                           .map((seat) => (
-                            <SeatCard key={seat.seatId} seat={seat} onClick={onSeatClick} />
+                            <SeatCard
+                              key={seat.seatId}
+                              seat={seat}
+                              isSelected={selectedSeatIds.includes(seat.seatId)}
+                              isPending={pendingSeatIds?.has(seat.seatId) ?? false}
+                              onClick={onSeatClick}
+                            />
                           ))}
                       </div>
                     </div>

@@ -5,6 +5,7 @@ import com.demo.seatreservation.global.exception.ErrorCode;
 import com.demo.seatreservation.domain.Reservation;
 import com.demo.seatreservation.domain.enums.ReservationStatus;
 import com.demo.seatreservation.repository.ReservationRepository;
+import com.demo.seatreservation.seat.SeatHoldPolicy;
 import com.demo.seatreservation.seat.dto.request.ReservationConfirmRequest;
 import com.demo.seatreservation.seat.dto.response.ReservationCancelResponse;
 import com.demo.seatreservation.seat.dto.response.ReservationConfirmResponse;
@@ -51,7 +52,16 @@ public class ReservationService {
 
         List<Long> seatIds = seatIdStrs.stream().map(Long::parseLong).toList();
 
-        // 3. DB 커밋 후 Redis 정리 (afterCommit)
+        // 3. 공연당 유저 평생 예약 상한(MAX_SEATS_PER_SHOW) 최종 방어
+        //    HOLD 시점에 이미 잔여 허용량만큼만 담기도록 막지만, 방어적으로 confirm 시점에도 한 번 더 확인한다
+        long reservedCount = reservationRepository.countByShowIdAndUserIdAndStatus(
+                showId, userId, ReservationStatus.RESERVED
+        );
+        if (reservedCount + seatIds.size() > SeatHoldPolicy.MAX_SEATS_PER_SHOW) {
+            throw new BusinessException(ErrorCode.HOLD_LIMIT_EXCEEDED);
+        }
+
+        // 4. DB 커밋 후 Redis 정리 (afterCommit)
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
@@ -62,7 +72,7 @@ public class ReservationService {
             }
         });
 
-        // 4. 전체 좌석 일괄 예약 저장
+        // 5. 전체 좌석 일괄 예약 저장
         // flush()로 UNIQUE 위반을 커밋 전에 강제 표면화 — 테스트에서 즉시 잡히도록
         try {
             List<Reservation> reservations = seatIds.stream()

@@ -9,6 +9,7 @@ import com.demo.seatreservation.domain.enums.ReservationStatus;
 import com.demo.seatreservation.global.exception.BusinessException;
 import com.demo.seatreservation.global.exception.ErrorCode;
 import com.demo.seatreservation.repository.ReservationRepository;
+import com.demo.seatreservation.seat.SeatHoldPolicy;
 import com.demo.seatreservation.seat.dto.request.SeatHoldRequest;
 import com.demo.seatreservation.seat.dto.response.SeatHoldResponse;
 import com.demo.seatreservation.seat.redis.HoldKey;
@@ -37,14 +38,24 @@ public class SeatHoldService {
             throw new BusinessException(ErrorCode.ALREADY_RESERVED);
         }
 
-        // 2. Lua Script로 원자적으로 PTTL → SCARD → SET NX PX → SADD → (EXPIRE) 실행
+        // 2. 공연당 유저 평생 예약 상한(MAX_SEATS_PER_SHOW) 중 이미 확정된 개수를 제외한 잔여 허용량 계산
+        //    세션(bundle)이 아니라 실제 RESERVED 개수 기준 — confirm으로 세션이 끝나도 이 상한은 유지된다
+        long reservedCount = reservationRepository.countByShowIdAndUserIdAndStatus(
+                showId, userId, ReservationStatus.RESERVED
+        );
+        long remainingAllowed = SeatHoldPolicy.MAX_SEATS_PER_SHOW - reservedCount;
+        if (remainingAllowed <= 0) {
+            throw new BusinessException(ErrorCode.HOLD_LIMIT_EXCEEDED);
+        }
+
+        // 3. Lua Script로 원자적으로 PTTL → SCARD → SET NX PX → SADD → (EXPIRE) 실행
         String bundleKey = HoldKey.bundleOf(showId, userId);
         String seatKey   = HoldKey.of(showId, seatId);
 
         long result = holdRedisRepository.executeTryHold(
                 bundleKey, seatKey,
                 String.valueOf(userId), String.valueOf(seatId),
-                HOLD_TTL_SEC
+                remainingAllowed, HOLD_TTL_SEC
         );
 
         if (result == -1L) {
@@ -68,25 +79,16 @@ public class SeatHoldService {
         String seatKey   = HoldKey.of(showId, seatId);
         String bundleKey = HoldKey.bundleOf(showId, userId);
 
-        // 1. HOLD 존재 확인
-        String owner = holdRedisRepository.getOwner(seatKey);
-        if (owner == null) {
+        // Lua Script로 GET owner → 소유자 검증 → DEL seatKey → SREM bundle → SCARD → (DEL bundle) 원자 실행
+        long result = holdRedisRepository.executeTryCancelHold(
+                seatKey, bundleKey, String.valueOf(userId), String.valueOf(seatId)
+        );
+
+        if (result == -1L) {
             throw new BusinessException(ErrorCode.HOLD_EXPIRED);
         }
-
-        // 2. 소유자 확인
-        if (!owner.equals(String.valueOf(userId))) {
+        if (result == -2L) {
             throw new BusinessException(ErrorCode.NOT_HOLD_OWNER);
-        }
-
-        // 3. 좌석 키 삭제
-        holdRedisRepository.delete(seatKey);
-
-        // 4. 번들에서 제거; 비어 있으면 번들도 삭제
-        holdRedisRepository.removeFromBundle(bundleKey, seatId);
-        Long remaining = holdRedisRepository.getBundleSize(bundleKey);
-        if (remaining == null || remaining == 0L) {
-            holdRedisRepository.deleteBundle(bundleKey);
         }
 
         return SeatHoldCancelResponse.available(seatId, showId);
