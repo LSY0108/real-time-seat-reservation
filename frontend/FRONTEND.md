@@ -17,10 +17,11 @@ Next.js 기반 공연 좌석 예매 서비스 프론트엔드 아키텍처 문�
 8. [서버 상태 관리 전략](#8-서버-상태-관리-전략)
 9. [보안 정책](#9-보안-정책)
 10. [페이지 인증 정책](#10-페이지-인증-정책)
-11. [구현 순서](#11-구현-순서)
-12. [향후 확장 방향](#12-향후-확장-방향)
-13. [개발 규칙 및 컨벤션](#13-개발-규칙-및-컨벤션)
-14. [설계 근거](#14-설계-근거)
+11. [예매 세션(Booking Session) HOLD 구조](#11-예매-세션booking-session-hold-구조)
+12. [구현 순서](#12-구현-순서)
+13. [향후 확장 방향](#13-향후-확장-방향)
+14. [개발 규칙 및 컨벤션](#14-개발-규칙-및-컨벤션)
+15. [설계 근거](#15-설계-근거)
 
 ---
 
@@ -68,6 +69,7 @@ Next.js 기반 공연 좌석 예매 서비스 프론트엔드 아키텍처 문�
 | React Hook Form | 7+ | 폼 상태 관리 |
 | Zod | 3+ | 폼 검증 스키마 |
 | @hookform/resolvers | — | RHF + Zod 연동 |
+| Vitest + React Testing Library | 3+ / 16+ | 단위/컴포넌트 테스트 |
 
 ### 선정 이유 요약
 
@@ -514,7 +516,48 @@ export function useRequireAuth() {
 
 ---
 
-## 11. 구현 순서
+## 11. 예매 세션(Booking Session) HOLD 구조
+
+백엔드가 좌석 단위 HOLD에서 **예매 세션(showId + userId) 단위 HOLD**로 구조를 전환했다 (`refactor/bundle-hold`, 백엔드 상세는 `backend/.../seat/CLAUDE.md` 참고). 프론트엔드의 HOLD/확정 플로우는 이 구조를 전제로 구현한다.
+
+### 핵심 사항
+
+| 항목 | 내용 |
+|------|------|
+| HOLD 단위 | 좌석은 API 호출 자체는 개별(`POST /api/seats/{seatId}/hold`)이지만, 서버에서 (showId, userId) 세션에 누적된다 |
+| 세션 TTL | 세션 최초 생성 시 300초 고정. 이후 추가되는 좌석은 **세션의 남은 TTL을 그대로 상속** (리셋되지 않음) |
+| 세션당 최대 좌석 수 | 4석 (초과 시 `HOLD_LIMIT_EXCEEDED`, 409) |
+| 예약 확정 요청 | `{ showId }`만 전송 (세션 전체 일괄 확정) |
+| 예약 확정 응답 | `reservedSeatIds: number[]` 배열 |
+| 세션 만료/부재 에러 | `SESSION_EXPIRED` (409) |
+
+### 좌석 클릭 = 로컬 토글, 서버 호출은 상태에 따라 POST 또는 DELETE
+
+실제 티켓팅 서비스처럼, **좌석 클릭이 곧바로 API 호출로 이어지되 클릭할 때마다 다른 엔드포인트를 호출**하는 토글 방식을 쓴다. 클릭 시점에 프론트가 들고 있는 `selectedSeatIds`(로컬 상태) 기준으로 분기한다.
+
+```
+선택되지 않은 좌석 클릭 → POST /api/seats/{seatId}/hold  { showId }
+  └─ 성공 시 selectedSeatIds에 seatId 추가
+이미 선택한 좌석 재클릭 → POST를 다시 호출하지 않고 DELETE /api/seats/{seatId}/hold  { showId }
+  └─ 성공 시 selectedSeatIds에서 seatId 제거, 좌석은 AVAILABLE로 돌아감
+```
+
+- 구현: `src/features/seat/hooks/useSeatHold.ts`
+  - `selectedSeatIds: number[]` — 내가 HOLD에 성공한 좌석 목록 (로컬 상태, TanStack Query 캐시가 아님)
+  - `pendingSeatIds: Set<number>` — 현재 요청이 진행 중인 좌석. 같은 좌석에 대한 중복 클릭을 막는 가드이며, `useState`가 아닌 `useRef`로 즉시 반영해 같은 렌더 사이클 내 연속 호출도 정확히 막는다
+  - `toggleSeat(seat)` — `selectedSeatIds.includes(seat.seatId)` 여부로 hold/cancel mutation을 선택해 실행
+  - HOLD/취소 성공·실패 모두 `invalidateQueries(['seats', showId])`로 실서버 상태를 재조회한다 — 특히 **DELETE 성공 후에는 이 재조회를 통해 좌석이 AVAILABLE로 보이게 된다** (프론트가 상태를 직접 조작하지 않음)
+  - HOLD 실패(409 `SEAT_ALREADY_HELD`/`HOLD_LIMIT_EXCEEDED`/`SESSION_EXPIRED` 등)는 일반 mutation 에러와 동일하게 처리 — `selectedSeatIds`에 추가하지 않고 에러 메시지만 노출
+- **서버가 내려주는 좌석 `status`(HELD)만으로는 "내가 선택한 좌석"과 "남이 HOLD 중인 좌석"을 구분할 수 없다** — 둘 다 동일하게 `HELD`로 조회된다. `SeatCard`는 `isSelected`(=`selectedSeatIds`에 포함 여부)를 서버 `status`보다 우선해 스타일/클릭 가능 여부를 계산한다:
+  - `RESERVED` → 항상 클릭 불가
+  - `isSelected === true` → `status`와 무관하게 클릭 가능 (재클릭 시 해제), 선택됨 스타일로 표시
+  - `isSelected === false` && `status === 'HELD'` → 클릭 불가 (남이 선점 중)
+  - 그 외(`AVAILABLE`) → 클릭 가능
+- `HoldTimer`를 붙일 경우 좌석별이 아니라 세션 단위로 하나만 둔다 — 세션 전체가 하나의 만료 시각을 공유하기 때문 (아직 미구현, §12 참고).
+
+---
+
+## 12. 구현 순서
 
 ### 1단계 — 기반 세팅
 
@@ -545,21 +588,24 @@ export function useRequireAuth() {
 
 ### 3단계 — 좌석 조회
 
-- [ ] `src/entities/seat.ts` — Seat 타입 정의
-- [ ] `src/api/seat.api.ts` — getSeats API 함수
-- [ ] `src/features/seat/hooks/useSeats.ts` — polling 포함
-- [ ] `src/features/seat/components/SeatGrid.tsx`
-- [ ] `src/features/seat/components/SeatCard.tsx`
-- [ ] `src/app/shows/[showId]/seats/page.tsx`
+- [x] `src/entities/seat.ts` — Seat 타입 정의
+- [x] `src/api/seat.api.ts` — getSeats API 함수
+- [x] `src/features/seat/hooks/useSeats.ts` — polling 포함
+- [x] `src/features/seat/components/SeatGrid.tsx`
+- [x] `src/features/seat/components/SeatCard.tsx`
+- [x] `src/app/shows/[showId]/seats/page.tsx`
 
-### 4단계 — HOLD + 예약 확정
+### 4단계 — HOLD (좌석 클릭 시 토글) + 예약 확정
 
-- [ ] `src/api/seat.api.ts` — holdSeat, cancelHold 추가
-- [ ] `src/api/reservation.api.ts` — confirmReservation
-- [ ] `src/features/seat/hooks/useSeatHold.ts`
-- [ ] `src/features/seat/hooks/useReservationConfirm.ts`
-- [ ] `src/features/seat/components/HoldTimer.tsx` — 5분 카운트다운(만료 시 자동 cancel API 호출 여부 추후 결정)
-- [ ] `src/features/seat/components/ConfirmModal.tsx`
+- [x] `src/api/seat.api.ts` — `holdSeatApi(seatId, showId)`, `cancelHoldApi(seatId, showId)` 추가
+- [x] `src/features/seat/hooks/useSeatHold.ts` — `selectedSeatIds`/`pendingSeatIds` 상태 + 클릭 시 hold/cancel 토글 (§11 참고)
+- [x] `src/features/seat/components/SeatCard.tsx` — `isSelected`/`isPending` 반영, 선택 시 재클릭으로 해제 가능하도록 클릭 가능 로직 변경
+- [x] `src/features/seat/components/SeatGrid.tsx` — `selectedSeatIds`/`pendingSeatIds`를 `SeatCard`로 전달
+- [x] `src/features/seat/components/SeatsView.tsx` — `useSeatHold` 연결, 선택됨 범례 추가, 에러 메시지 표시
+- [ ] `src/api/reservation.api.ts` — confirmReservation (`{ showId }`만 전송, 세션 전체 일괄 확정)
+- [ ] `src/features/seat/hooks/useReservationConfirm.ts` — `SESSION_EXPIRED` 에러 시 좌석 목록 재조회 + 선택 상태 초기화
+- [ ] `src/features/seat/components/HoldTimer.tsx` — 세션 단위 단일 카운트다운(좌석별 타이머 아님)
+- [ ] `src/features/seat/components/ConfirmModal.tsx` — `selectedSeatIds` 기준으로 선택 좌석 표시, 확정 요청은 `{ showId }`만 전송
 
 ### 5단계 — 내 예약 조회/취소
 
@@ -573,7 +619,7 @@ export function useRequireAuth() {
 
 ---
 
-## 12. 향후 확장 방향
+## 13. 향후 확장 방향
 
 ### 백엔드 API 미구현 항목 (현재)
 
@@ -595,7 +641,7 @@ export function useRequireAuth() {
 
 ---
 
-## 13. 개발 규칙 및 컨벤션
+## 14. 개발 규칙 및 컨벤션
 
 ### 파일/폴더 명명
 
@@ -674,6 +720,20 @@ export function useSeatHold(showId: number) {
 }
 ```
 
+### 테스트
+
+Vitest + React Testing Library를 사용한다 (`vitest.config.ts`, `vitest.setup.ts`). 백엔드처럼 실제 서버 연동 테스트가 아니라, `@/api/*` 모듈을 `vi.mock`으로 대체하는 단위/컴포넌트 테스트다.
+
+```bash
+npm run test        # 1회 실행 (CI용)
+npm run test:watch  # 워치 모드
+```
+
+- 테스트 파일은 대상 파일과 같은 폴더에 `*.test.ts(x)`로 둔다 (예: `useSeatHold.ts` ↔ `useSeatHold.test.tsx`)
+- `src/api/*` 함수는 `vi.mock('@/api/seat.api')`로 대체하고, 훅 테스트는 `QueryClientProvider`로 감싼 wrapper를 통해 `renderHook`
+- 컴포넌트 테스트는 `@testing-library/react`의 `render`/`screen` + `@testing-library/user-event` 사용, 텍스트보다 `role` 기반 쿼리(`getByRole('button')`) 우선
+- mutation의 낙관적 업데이트/에러 분기를 검증할 때는 `act(async () => { ... })`로 microtask를 명시적으로 flush해야 한다 — 동기 `act`만 사용하면 `mutate()` 내부의 Promise 체인이 아직 실행되지 않은 상태에서 assertion이 먼저 실행되어 거짓 실패가 날 수 있다
+
 ### 환경 변수
 
 | 변수 | 설명 | 예시 |
@@ -696,7 +756,7 @@ chore: TanStack Query 의존성 추가
 
 ---
 
-## 14. 설계 근거
+## 15. 설계 근거
 
 ### "왜 Context가 아닌 Zustand인가"
 
