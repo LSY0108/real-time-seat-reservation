@@ -68,25 +68,16 @@ public class SeatHoldService {
         String seatKey   = HoldKey.of(showId, seatId);
         String bundleKey = HoldKey.bundleOf(showId, userId);
 
-        // 1. HOLD 존재 확인
-        String owner = holdRedisRepository.getOwner(seatKey);
-        if (owner == null) {
+        // Lua Script로 GET owner → 소유자 검증 → DEL seatKey → SREM bundle → SCARD → (DEL bundle) 원자 실행
+        long result = holdRedisRepository.executeTryCancelHold(
+                seatKey, bundleKey, String.valueOf(userId), String.valueOf(seatId)
+        );
+
+        if (result == -1L) {
             throw new BusinessException(ErrorCode.HOLD_EXPIRED);
         }
-
-        // 2. 소유자 확인
-        if (!owner.equals(String.valueOf(userId))) {
+        if (result == -2L) {
             throw new BusinessException(ErrorCode.NOT_HOLD_OWNER);
-        }
-
-        // 3. 좌석 키 삭제
-        holdRedisRepository.delete(seatKey);
-
-        // 4. 번들에서 제거; 비어 있으면 번들도 삭제
-        holdRedisRepository.removeFromBundle(bundleKey, seatId);
-        Long remaining = holdRedisRepository.getBundleSize(bundleKey);
-        if (remaining == null || remaining == 0L) {
-            holdRedisRepository.deleteBundle(bundleKey);
         }
 
         return SeatHoldCancelResponse.available(seatId, showId);
