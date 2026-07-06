@@ -7,3 +7,16 @@ export interface Seat {
   number: number;
   status: SeatStatus;
 }
+
+export interface SeatHoldResult {
+  seatId: number;
+  showId: number;
+  status: SeatStatus;
+  expiresInSec: number;
+}
+
+export interface SeatHoldCancelResult {
+  seatId: number;
+  showId: number;
+  status: SeatStatus;
+}

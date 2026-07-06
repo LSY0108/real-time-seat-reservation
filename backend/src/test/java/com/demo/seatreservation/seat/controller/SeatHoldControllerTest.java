@@ -318,6 +318,59 @@ class SeatHoldControllerTest {
     }
 
     @Test
+    void cancelHold_middleSeat_bundleKeepsRemainingMembers() throws Exception {
+        // 3석 hold 후 그중 1석만 취소 → 취소한 seat 키만 삭제되고 bundle은 나머지 2석을 유지한 채 살아있어야 한다
+        User user = saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+
+        long showId = 1L;
+        List<Seat> seats = createSeats(showId, 3);
+        String bundleKey = HoldKey.bundleOf(showId, user.getId());
+
+        for (Seat seat : seats) {
+            mockMvc.perform(post("/api/seats/{seatId}/hold", seat.getId())
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"showId": %d}
+                                    """.formatted(showId)))
+                    .andExpect(status().isOk());
+        }
+
+        Long canceledSeatId = seats.get(0).getId();
+        String canceledSeatKey = HoldKey.of(showId, canceledSeatId);
+
+        mockMvc.perform(delete("/api/seats/{seatId}/hold", canceledSeatId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("AVAILABLE"));
+
+        // 취소한 좌석 키는 삭제됨
+        Assertions.assertNull(stringRedisTemplate.opsForValue().get(canceledSeatKey));
+
+        // bundle은 삭제되지 않고 나머지 2석을 그대로 유지
+        Set<String> remainingMembers = stringRedisTemplate.opsForSet().members(bundleKey);
+        Assertions.assertNotNull(remainingMembers);
+        Assertions.assertEquals(2, remainingMembers.size());
+        Assertions.assertFalse(remainingMembers.contains(String.valueOf(canceledSeatId)));
+        Assertions.assertTrue(remainingMembers.contains(String.valueOf(seats.get(1).getId())));
+        Assertions.assertTrue(remainingMembers.contains(String.valueOf(seats.get(2).getId())));
+
+        // 남은 좌석들의 키는 그대로 유지
+        Assertions.assertNotNull(stringRedisTemplate.opsForValue().get(HoldKey.of(showId, seats.get(1).getId())));
+        Assertions.assertNotNull(stringRedisTemplate.opsForValue().get(HoldKey.of(showId, seats.get(2).getId())));
+
+        // bundle 키 자체는 살아있어야 한다 (TTL 보유)
+        Long bundleTtl = stringRedisTemplate.getExpire(bundleKey, TimeUnit.SECONDS);
+        Assertions.assertNotNull(bundleTtl);
+        Assertions.assertTrue(bundleTtl > 0);
+    }
+
+    @Test
     void cancelHold_notOwner_returns403() throws Exception {
         saveUser("user1@test.com");
         saveUser("user2@test.com");
@@ -406,6 +459,116 @@ class SeatHoldControllerTest {
                                 {"showId": %d}
                                 """.formatted(showId)))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void hold_afterConfirmingFourSeats_newSessionCannotHoldMore_returns409() throws Exception {
+        // 4석을 hold → confirm으로 확정 → 새 세션에서 다른 좌석을 hold해도 평생 상한(4석)에 걸려 실패해야 한다
+        saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+
+        long showId = 1L;
+        List<Seat> seats = createSeats(showId, 5);
+        List<Long> firstFour = seats.subList(0, 4).stream().map(Seat::getId).toList();
+
+        for (Long seatId : firstFour) {
+            mockMvc.perform(post("/api/seats/{seatId}/hold", seatId)
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"showId": %d}
+                                    """.formatted(showId)))
+                    .andExpect(status().isOk());
+        }
+
+        mockMvc.perform(post("/api/reservations/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isOk());
+
+        Long fifthSeatId = seats.get(4).getId();
+
+        mockMvc.perform(post("/api/seats/{seatId}/hold", fifthSeatId)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("HOLD_LIMIT_EXCEEDED"));
+    }
+
+    @Test
+    void hold_userAlreadyReservedTwoSeats_onlyTwoMoreCanBeHeldInNewSession() throws Exception {
+        // 유저가 이 공연에서 이미 2석을 확정 예약한 상태 → 새 세션에서는 2석까지만 hold 가능, 3번째는 실패
+        User user = saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+
+        long showId = 1L;
+        List<Seat> seats = createSeats(showId, 5);
+
+        for (int i = 0; i < 2; i++) {
+            reservationRepository.save(
+                    Reservation.builder()
+                            .showId(showId)
+                            .seatId(seats.get(i).getId())
+                            .userId(user.getId())
+                            .status(ReservationStatus.RESERVED)
+                            .build()
+            );
+        }
+
+        for (int i = 2; i < 4; i++) {
+            mockMvc.perform(post("/api/seats/{seatId}/hold", seats.get(i).getId())
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"showId": %d}
+                                    """.formatted(showId)))
+                    .andExpect(status().isOk());
+        }
+
+        mockMvc.perform(post("/api/seats/{seatId}/hold", seats.get(4).getId())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("HOLD_LIMIT_EXCEEDED"));
+    }
+
+    @Test
+    void hold_userAlreadyReservedMaxSeats_newSessionCannotHoldAny_returns409() throws Exception {
+        // 유저가 이 공연에서 이미 4석(상한)을 확정 예약한 상태 → 새 세션에서는 1석도 hold 불가
+        User user = saveUser("user@test.com");
+        String token = loginAndGetToken("user@test.com");
+
+        long showId = 1L;
+        List<Seat> seats = createSeats(showId, 5);
+
+        for (int i = 0; i < 4; i++) {
+            reservationRepository.save(
+                    Reservation.builder()
+                            .showId(showId)
+                            .seatId(seats.get(i).getId())
+                            .userId(user.getId())
+                            .status(ReservationStatus.RESERVED)
+                            .build()
+            );
+        }
+
+        mockMvc.perform(post("/api/seats/{seatId}/hold", seats.get(4).getId())
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("HOLD_LIMIT_EXCEEDED"));
     }
 
     @Test

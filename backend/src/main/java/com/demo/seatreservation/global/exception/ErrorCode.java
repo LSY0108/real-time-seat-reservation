@@ -29,7 +29,7 @@ public enum ErrorCode {
     EMAIL_DUPLICATED(HttpStatus.CONFLICT, "이메일 중복"),
     SEAT_DUPLICATED(HttpStatus.CONFLICT, "동일 좌석(구역/행/번호) 중복"),
     SEAT_RESERVED_CANNOT_DELETE(HttpStatus.CONFLICT, "예약 확정 좌석 삭제 불가"),
-    HOLD_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "좌석은 최대 4개까지 선택 가능"),
+    HOLD_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "이 공연에서 예약 가능한 좌석은 최대 4석입니다"),
     SESSION_EXPIRED(HttpStatus.CONFLICT, "예매 세션이 만료되었거나 존재하지 않습니다");
 
     private final HttpStatus httpStatus;
