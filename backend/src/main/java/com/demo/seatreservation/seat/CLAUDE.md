@@ -1,6 +1,6 @@
 # seat/CLAUDE.md
 
-좌석 선점·예약·취소 모듈 상세 규칙. 공통 규칙은 루트 `CLAUDE.md` 참고.
+좌석 선점·예약·취소 모듈 상세 규칙. 공통 규칙은 [`backend/AGENTS.md`](../../../../../../../AGENTS.md) 참고.
 
 HOLD는 **예매 세션(showId + userId) 단위**로 묶여서 관리된다 (`refactor/bundle-hold`). 좌석 1개씩 개별로 관리되던 이전 구조와 다르다 — 아래 "Redis HOLD 구조"부터 반드시 확인할 것.
 
@@ -188,6 +188,7 @@ hold:bundle:{showId}:{userId}   = Set<seatId>   (예매 세션 = 좌석 묶음, 
 - 인증 토큰 없음 → 401 (`confirmAll_noAuthToken_returns401`)
 - bundle에 2석 중 1석만 DB에 이미 RESERVED → 전체 롤백, 나머지 1석도 저장되지 않음(all-or-nothing) (`confirmAll_partialDuplicate_rollbacksAll`)
 - 이미 2석 확정된 유저의 bundle에 3석이 더 있으면(합계 5석) 평생 상한 초과로 `HOLD_LIMIT_EXCEEDED`, 아무 것도 저장되지 않음 (`confirmAll_exceedsLifetimeLimitPerShow_returns409_andSavesNothing`)
+- 같은 bundle에 대해 confirm 요청이 동시에 여러 번 들어와도(더블 클릭/중복 재시도) DB UNIQUE 제약이 최종 방어선이 되어 정확히 1건만 성공하고 나머지는 409(`ALREADY_RESERVED` 또는 `SESSION_EXPIRED`) — `CountDownLatch` 기반 (`confirmAll_concurrentDuplicateRequests_onlyOneSucceeds`)
 
 **좌석 조회**
 - HOLD 걸면 HELD로 보이는지 확인

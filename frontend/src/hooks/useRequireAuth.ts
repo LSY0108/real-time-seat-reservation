@@ -13,7 +13,8 @@ export function useRequireAuth() {
 
   useEffect(() => {
     if (accessToken) {
-      setIsChecking(false);
+      // isChecking은 이미 useState(!accessToken)로 초기화되어 있어
+      // 이 시점엔 이미 false다 — 중복 setState 불필요
       return;
     }
 

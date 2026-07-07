@@ -501,24 +501,13 @@ refreshToken 쿠키가 만료되었거나 없으면 refresh는 실패한다.
 
 ## 6. 테스트 방법
 
-테스트 전 백엔드(`localhost:8080`)와 Redis, MySQL이 실행 중이어야 한다.
-
-```bash
-# 백엔드 디렉토리에서
-docker-compose up -d
-cd backend && ./gradlew bootRun
-```
-
-```bash
-# 프론트엔드 디렉토리에서
-cd frontend && npm run dev
-```
+백엔드/프론트엔드를 띄우는 방법은 `.claude/skills/verify/SKILL.md`(저장소 루트) 참고. 아래는 그 위에서 인증 플로우만 수동으로 확인할 때의 시나리오다.
 
 ---
 
 ### 회원가입 성공 확인
 
-1. `http://localhost:3000/signup` 접속
+1. `http://localhost:3001/signup` 접속
 2. 이메일, 비밀번호(8자 이상), 이름, 전화번호 입력 후 제출
 3. `/login` 페이지로 리다이렉트 확인
 4. DB에서 users 테이블에 레코드 생성 확인
@@ -531,7 +520,7 @@ cd frontend && npm run dev
 
 ### 로그인 성공 확인
 
-1. `http://localhost:3000/login` 접속
+1. `http://localhost:3001/login` 접속
 2. 가입한 이메일/비밀번호 입력 후 제출
 3. `/` 홈으로 리다이렉트 확인
 
@@ -553,7 +542,7 @@ cd frontend && npm run dev
 // 또는 컴포넌트에서 useAuthStore() 훅 값을 console.log로 확인
 ```
 
-React Query Devtools가 개발 환경에서 자동으로 활성화된다(`localhost:3000` 우측 하단).
+React Query Devtools가 개발 환경에서 자동으로 활성화된다(`localhost:3001` 우측 하단).
 
 ---
 
