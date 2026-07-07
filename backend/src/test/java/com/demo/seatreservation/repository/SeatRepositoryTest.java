@@ -25,11 +25,12 @@ public class SeatRepositoryTest {
         // findAll(모든 공연 데이터 다 가져옴) vs findByShowId(필요한 공연 데이터만 가져옴)
 
         // given
-        // showId 1, 2, 3 각각 10,000개 → 총 30,000개
+        // showId 101, 102, 103 각각 10,000개 → 총 30,000개
+        // (DataInitializer가 showId=1에 시드 데이터를 넣으므로 겹치지 않는 showId 사용)
         for (int i = 1; i <= 10000; i++) {
             seatRepository.save(
                     Seat.builder()
-                            .showId(1L)
+                            .showId(101L)
                             .zone("A")
                             .row(i / 100 + 1)
                             .number(i % 100)
@@ -38,7 +39,7 @@ public class SeatRepositoryTest {
 
             seatRepository.save(
                     Seat.builder()
-                            .showId(2L)
+                            .showId(102L)
                             .zone("A")
                             .row(i / 100 + 1)
                             .number(i % 100)
@@ -47,7 +48,7 @@ public class SeatRepositoryTest {
 
             seatRepository.save(
                     Seat.builder()
-                            .showId(3L)
+                            .showId(103L)
                             .zone("A")
                             .row(i / 100 + 1)
                             .number(i % 100)
@@ -65,7 +66,7 @@ public class SeatRepositoryTest {
         // when (2) 특정 show 조회
         long startFilter = System.currentTimeMillis();
 
-        List<Seat> filteredSeats = seatRepository.findByShowId(1L);
+        List<Seat> filteredSeats = seatRepository.findByShowId(101L);
 
         long endFilter = System.currentTimeMillis();
 
