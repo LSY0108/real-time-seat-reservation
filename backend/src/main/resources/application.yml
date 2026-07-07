@@ -1,6 +1,8 @@
 server:
   port: 8080
 
+# 아래 DB 비밀번호와 jwt.secret은 로컬 개발 전용 값이다.
+# 운영 배포 시 반드시 환경변수/시크릿 매니저로 분리할 것 — 커밋된 평문 값을 그대로 쓰지 말 것.
 spring:
   datasource:
     url: jdbc:mysql://localhost:3307/seatdb?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
