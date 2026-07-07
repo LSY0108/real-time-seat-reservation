@@ -27,7 +27,11 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -395,5 +399,77 @@ public class ReservationConfirmControllerTest {
         // 기존 2건만 남아있고, bundle의 3석은 하나도 저장되지 않아야 한다
         Assertions.assertEquals(2L, reservationRepository.count(),
                 "평생 상한 초과 시 confirm은 아무 것도 저장하지 않아야 한다");
+    }
+
+    /**
+     * 테스트 목적:
+     * 같은 예매 세션(bundle)에 대해 confirm 요청이 동시에 여러 번 들어올 때
+     * (더블 클릭, 네트워크 재시도로 인한 중복 요청 등) DB UNIQUE(show_id, seat_id)
+     * 제약이 최종 방어선으로 작동해 정확히 1건만 성공해야 한다.
+     *
+     * bundle 삭제는 커밋 후(afterCommit)에 일어나므로, 동시에 들어온 나머지 요청은
+     * 타이밍에 따라 ALREADY_RESERVED 또는 SESSION_EXPIRED로 실패할 수 있다 —
+     * 어느 쪽이든 409이면 되고, 핵심은 DB에 중복 없이 정확히 1건만 남는지다.
+     *
+     * 기대 결과:
+     * - HTTP 200 성공 응답 = 정확히 1건
+     * - 나머지는 전부 409
+     * - DB 예약 건수 = 1 (중복 저장 없음)
+     */
+    @Test
+    void confirmAll_concurrentDuplicateRequests_onlyOneSucceeds() throws Exception {
+        int threadCount = 8;
+        User user = saveUser("confirm@test.com");
+        String token = loginAndGetToken("confirm@test.com");
+
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
+        Long showId = 1L;
+
+        setupBundle(showId, user.getId(), List.of(seatId));
+
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch  = new CountDownLatch(threadCount);
+        AtomicInteger successCount  = new AtomicInteger(0);
+        AtomicInteger conflictCount = new AtomicInteger(0);
+
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        for (int i = 0; i < threadCount; i++) {
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    int status = mockMvc.perform(post("/api/reservations/confirm")
+                                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content("""
+                                            {"showId": %d}
+                                            """.formatted(showId)))
+                            .andReturn()
+                            .getResponse()
+                            .getStatus();
+
+                    if (status == 200) successCount.incrementAndGet();
+                    else if (status == 409) conflictCount.incrementAndGet();
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown(); // 전 스레드 동시 출발
+        doneLatch.await(15, TimeUnit.SECONDS);
+        executor.shutdown();
+
+        // 정확히 1건만 성공
+        Assertions.assertEquals(1, successCount.get(), "confirm 성공은 정확히 1건이어야 한다");
+        Assertions.assertEquals(threadCount - 1, conflictCount.get());
+
+        // DB에는 중복 없이 정확히 1건만 저장되어야 한다
+        List<Reservation> reservations = reservationRepository.findAll();
+        Assertions.assertEquals(1, reservations.size(), "중복 예약 없이 정확히 1건만 저장되어야 한다");
+        Assertions.assertEquals(ReservationStatus.RESERVED, reservations.get(0).getStatus());
+        Assertions.assertEquals(seatId, reservations.get(0).getSeatId());
     }
 }
