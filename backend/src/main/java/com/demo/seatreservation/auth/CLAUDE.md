@@ -1,6 +1,6 @@
 # auth/CLAUDE.md
 
-인증/인가 모듈 상세 규칙. 공통 규칙은 루트 `CLAUDE.md` 참고.
+인증/인가 모듈 상세 규칙. 공통 규칙은 [`backend/AGENTS.md`](../../../../../../../AGENTS.md) 참고.
 
 ---
 

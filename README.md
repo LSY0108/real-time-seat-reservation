@@ -95,12 +95,7 @@ POST /api/seats/{seatId}/hold
 2. 동일 공연 HOLD 개수 확인 (최대 4석 제한)
 3. Redis `SET NX` 원자 연산으로 선점 — 동시 요청 시 단 하나만 성공
 
-**Redis 키 구조:**
-
-```
-hold:{showId}:{seatId}          = userId       (TTL 300s)
-hold:user:{showId}:{userId}     = Set<seatId>  (1인 선점 추적)
-```
+Redis 키 구조(예매 세션/bundle 단위 HOLD)와 Lua Script 원자성 상세는 [`backend/src/main/java/com/demo/seatreservation/seat/CLAUDE.md`](backend/src/main/java/com/demo/seatreservation/seat/CLAUDE.md) 참고.
 
 ---
 
@@ -124,19 +119,9 @@ POST /api/reservations/confirm
 
 ### API 목록
 
-| Method | Endpoint | 설명 | 인증 |
-|--------|----------|------|------|
-| GET | `/api/seats?showId={id}` | 실시간 좌석 조회 | 불필요 |
-| POST | `/api/seats/{seatId}/hold` | 좌석 선점 | 필요 |
-| DELETE | `/api/seats/{seatId}/hold` | 선점 취소 | 필요 |
-| POST | `/api/reservations/confirm` | 예약 확정 | 필요 |
-| GET | `/api/me/reservations` | 내 예약 조회 | 필요 |
-| POST | `/api/reservations/{id}/cancel` | 예약 취소 | 필요 |
-| POST | `/api/auth/signup` | 회원가입 | 불필요 |
-| POST | `/api/auth/login` | 로그인 | 불필요 |
-| POST | `/api/auth/refresh` | 토큰 갱신 | 쿠키 |
-| POST | `/api/auth/logout` | 단일 세션 로그아웃 | 필요 |
-| POST | `/api/auth/logout-all` | 전체 기기 로그아웃 | 필요 |
+좌석/예약 6개 + 인증 5개, 총 11개 엔드포인트. 전체 목록과 요청/응답 스키마는 도메인별 문서가 기준이다:
+- 좌석·예약 API → [`seat/CLAUDE.md`](backend/src/main/java/com/demo/seatreservation/seat/CLAUDE.md) "구현된 API"
+- 인증 API → [`auth/CLAUDE.md`](backend/src/main/java/com/demo/seatreservation/auth/CLAUDE.md) "구현된 API"
 
 ---
 
@@ -153,8 +138,8 @@ POST /api/reservations/confirm
 
 ### 테스트
 
-Mock 없이 실제 MySQL + Redis 연결 기반 `@SpringBootTest` 통합 테스트 70개 작성 (12개 테스트 클래스).  
-인증, 좌석 선점/취소, 예약 확정/조회/취소 전 시나리오 커버.
+Mock 없이 실제 MySQL + Redis 연결 기반 `@SpringBootTest` 통합 테스트 84개 작성 (12개 테스트 클래스).  
+인증, 좌석 선점/취소, 예약 확정/조회/취소 전 시나리오 + 동시성(레이스 컨디션) 시나리오 커버.
 
 ---
 
@@ -229,22 +214,11 @@ POST /api/auth/refresh  ← 쿠키 자동 전송
 
 ### Redis 세션 키 구조
 
-```
-refresh:{userId}:{sessionId}     → refreshToken          (순방향, TTL 14일)
-refresh:token:{refreshToken}     → userId:sessionId      (역방향 조회)
-refresh:sessions:{userId}        → Set<sessionId>        (멀티 디바이스 추적)
-```
-
-3-key 구조로 **단일 세션 로그아웃**, **전체 기기 로그아웃**, **멀티 디바이스 세션 추적**을 모두 지원합니다.
+3-key 구조(순방향/역방향/멀티 디바이스 추적)로 **단일 세션 로그아웃**, **전체 기기 로그아웃**, **멀티 디바이스 세션 추적**을 모두 지원합니다. 정확한 키 구조는 [`auth/CLAUDE.md`](backend/src/main/java/com/demo/seatreservation/auth/CLAUDE.md) "Redis 세션 구조" 참고.
 
 ### 토큰 전략 선택 이유
 
-| 토큰 | 저장 위치 | 이유 |
-|------|-----------|------|
-| Access Token (JWT) | 프론트엔드 인메모리 | XSS 공격으로 인한 localStorage 탈취 위험 회피 |
-| Refresh Token (Opaque) | HttpOnly Cookie | JS 접근 불가, Redis에서 즉시 무효화 가능 |
-
-Refresh Token을 JWT가 아닌 Opaque로 설계한 이유: 서버가 발급 후 내용을 제어할 수 없는 JWT와 달리, Opaque Token은 Redis에서 즉시 삭제해 강제 만료할 수 있어 **탈취 대응 및 전체 로그아웃**이 가능합니다.
+Access Token은 인메모리(XSS 방어), Refresh Token은 Opaque + HttpOnly Cookie(즉시 무효화 가능)로 저장합니다. 상세 이유는 아래 [§7](#7-기술적으로-고민한-부분)과 [`auth/CLAUDE.md`](backend/src/main/java/com/demo/seatreservation/auth/CLAUDE.md) "보안 정책" 참고.
 
 ---
 
@@ -348,15 +322,21 @@ npm run dev
 AI 에이전트(Claude Code 등)와 사람 모두를 위해, 코드와 같은 위치에 도메인별 문서를 둔다. 코드를 수정하면 같은 디렉토리의 문서도 함께 갱신한다.
 
 ```
-backend/CLAUDE.md                              # 백엔드 공통 규칙 (기술스택, 패키지 구조, 코드/테스트 컨벤션)
+backend/CLAUDE.md / AGENTS.md                   # 백엔드 공통 규칙 (기술스택, 패키지 구조, 코드/테스트 컨벤션)
 ├── auth/CLAUDE.md                              # 인증 모듈 — 토큰 구조, Redis 세션, Rotation/탈취 감지
 └── seat/CLAUDE.md                              # 좌석/예약 모듈 — HOLD 구조, API 흐름, ErrorCode
 
 frontend/CLAUDE.md / AGENTS.md                  # 프론트 공통 규칙 (Next.js 버전 주의사항)
 frontend/FRONTEND.md                            # 프론트 전체 아키텍처 (폴더 구조, 상태 관리, 구현 순서)
 frontend/AUTH_FLOW.md                           # 인증 플로우 as-built 상세 (요청/응답 스키마, 다이어그램)
+
+.claude/skills/verify/SKILL.md                  # 실행 검증 하네스 — backend/frontend 빌드·구동·구동 레시피
+.github/workflows/ci.yml                        # CI — push/PR마다 backend gradle test + frontend lint/test/build 자동 실행
+WORKFLOW.md                                     # AI 에이전트 작업 규칙/9단계 절차/포트폴리오 모드
+CHANGELOG.md                                    # 주요 변경 이력 (Keep a Changelog 형식)
 ```
 
 새 기능을 추가하거나 동작을 바꿀 때:
 1. 백엔드 도메인 로직 변경 → 해당 `auth/CLAUDE.md` 또는 `seat/CLAUDE.md` 갱신
 2. 프론트 인증/상태 관리 변경 → `FRONTEND.md` 또는 `AUTH_FLOW.md` 갱신
+3. 실행/구동 방식 변경(포트, 커맨드, 컨테이너 구성 등) → `.claude/skills/verify/SKILL.md` 갱신
