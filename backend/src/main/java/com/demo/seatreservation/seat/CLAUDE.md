@@ -32,6 +32,7 @@ HOLD는 **예매 세션(showId + userId) 단위**로 묶여서 관리된다 (`re
 | 예약 확정 소유권 | 별도 소유권 체크 없음 — `(showId, userId)`로 만든 본인 세션의 좌석만 조회·확정하므로 구조적으로 타인 좌석을 확정할 수 없음 |
 | 예약 취소 대상 | RESERVED 상태만 가능 |
 | 취소 후 HOLD 복구 | 없음 — 취소는 확정 해제, 선점 자동 생성 안 함 |
+| 취소된 좌석 재예약 | 가능 — CANCELED 이력은 DB에 남지만 같은 좌석을 다시 hold→confirm할 수 있다 (아래 "예약 UNIQUE 제약과 재예약" 참고) |
 
 ---
 
@@ -76,6 +77,25 @@ hold:bundle:{showId}:{userId}   = Set<seatId>   (예매 세션 = 좌석 묶음, 
 - HOLD 시점(`SeatHoldService.hold()`): `remainingAllowed = MAX_SEATS_PER_SHOW - reservedCount`를 계산해 `executeTryHold`의 `maxSeats` 인자로 그대로 넘긴다. `remainingAllowed <= 0`이면 Redis를 건드리지 않고 즉시 `HOLD_LIMIT_EXCEEDED`
 - confirm 시점(`ReservationService.confirmAll()`): `reservedCount + bundle 좌석 수 > MAX_SEATS_PER_SHOW`이면 저장 전에 `HOLD_LIMIT_EXCEEDED`로 롤백 (HOLD 시점 체크를 우회하는 경로가 생기지 않도록 하는 최종 방어)
 - **세션당 4석 제한과 완전히 같은 값(4)을 재사용하지만 별개의 카운터다** — 세션 제한은 Redis bundle의 SCARD, 평생 상한은 DB의 RESERVED 개수. 둘 다 만족해야 hold 가능
+
+---
+
+## 예약 UNIQUE 제약과 재예약 (`Reservation.uk_resv_show_seat`)
+
+예약 취소는 행을 삭제하지 않고 `status = CANCELED`로만 바꾸므로(위 "취소 후 HOLD 복구" 참고), `(show_id, seat_id)`에 대한 단순 UNIQUE 제약은 취소된 좌석을 영구히 재예약 불가능하게 만든다 — 과거 CANCELED 행과 새로 insert하려는 RESERVED 행이 같은 `(show_id, seat_id)`로 충돌하기 때문.
+
+이를 막기 위해 `Reservation`에 DB 생성 컬럼(STORED GENERATED) `active_seat_marker`를 두고, UNIQUE 제약이 `seat_id`가 아니라 이 컬럼을 참조한다:
+
+```sql
+active_seat_marker BIGINT GENERATED ALWAYS AS (CASE WHEN status = 'RESERVED' THEN seat_id END) STORED
+UNIQUE (show_id, active_seat_marker)
+```
+
+- `status = RESERVED`일 때만 `active_seat_marker = seat_id`, 그 외(CANCELED)에는 `NULL`
+- MySQL은 UNIQUE 제약에서 NULL을 서로 다른 값으로 취급하므로, 같은 좌석에 대한 CANCELED 이력은 몇 건이 쌓여도 충돌하지 않는다
+- 반면 RESERVED는 여전히 `(show_id, seat_id)` 조합당 정확히 1건만 허용되므로, 동시 confirm 중복 방지(DB 최종 방어선, `confirmAll_concurrentDuplicateRequests_onlyOneSucceeds`)는 그대로 유지된다
+- `active_seat_marker`는 `insertable=false, updatable=false`이며 Java 코드에서 직접 읽거나 쓰지 않는다 — DB가 자동 계산
+- `GlobalExceptionHandler`의 UNIQUE 충돌 → `ALREADY_RESERVED` 매핑은 제약 이름(`uk_resv_show_seat`)으로 판단하므로 컬럼 변경과 무관하게 그대로 동작
 
 ---
 
@@ -185,6 +205,7 @@ hold:bundle:{showId}:{userId}   = Set<seatId>   (예매 세션 = 좌석 묶음, 
 - bundle 없이 confirm → `SESSION_EXPIRED` (`confirmAll_noBundle_returns409_sessionExpired`)
 - 같은 세션으로 confirm 두 번 호출 시 두 번째는 bundle이 이미 정리되어 `SESSION_EXPIRED` (`confirmAll_twice_secondReturns409_sessionExpired`)
 - bundle 내 좌석이 DB에 이미 RESERVED 상태면 `ALREADY_RESERVED` (`confirmAll_whenSeatAlreadyReservedInDb_returns409`)
+- 같은 좌석에 대한 과거 CANCELED 이력이 있어도 재confirm 성공 (`confirmAll_afterPreviousCancellation_canReserveAgain`)
 - 인증 토큰 없음 → 401 (`confirmAll_noAuthToken_returns401`)
 - bundle에 2석 중 1석만 DB에 이미 RESERVED → 전체 롤백, 나머지 1석도 저장되지 않음(all-or-nothing) (`confirmAll_partialDuplicate_rollbacksAll`)
 - 이미 2석 확정된 유저의 bundle에 3석이 더 있으면(합계 5석) 평생 상한 초과로 `HOLD_LIMIT_EXCEEDED`, 아무 것도 저장되지 않음 (`confirmAll_exceedsLifetimeLimitPerShow_returns409_andSavesNothing`)

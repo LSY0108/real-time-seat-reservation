@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useSeats } from '@/features/seat/hooks/useSeats';
 import { useSeatHold } from '@/features/seat/hooks/useSeatHold';
 import { useReservationConfirm } from '@/features/seat/hooks/useReservationConfirm';
+import { BackHomeButton } from '@/components/ui/BackHomeButton';
 import { SeatGrid } from './SeatGrid';
 import { HoldTimer } from './HoldTimer';
 import { ConfirmModal } from './ConfirmModal';
@@ -55,30 +56,40 @@ export function SeatsView({ showId }: SeatsViewProps) {
 
   if (isLoading) {
     return (
-      <div className="flex h-48 items-center justify-center text-sm text-zinc-500">
-        좌석 불러오는 중...
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <BackHomeButton />
+        <div className="flex h-48 items-center justify-center text-sm text-zinc-500">
+          좌석 불러오는 중...
+        </div>
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div className="flex h-48 items-center justify-center text-sm text-red-500">
-        좌석 정보를 불러오지 못했습니다.
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <BackHomeButton />
+        <div className="flex h-48 items-center justify-center text-sm text-red-500">
+          좌석 정보를 불러오지 못했습니다.
+        </div>
       </div>
     );
   }
 
   if (!seats?.length) {
     return (
-      <div className="flex h-48 items-center justify-center text-sm text-zinc-500">
-        등록된 좌석이 없습니다.
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <BackHomeButton />
+        <div className="flex h-48 items-center justify-center text-sm text-zinc-500">
+          등록된 좌석이 없습니다.
+        </div>
       </div>
     );
   }
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-8 pb-24">
+      <BackHomeButton />
       <h1 className="mb-1 text-xl font-semibold text-zinc-900">좌석 선택</h1>
       <p className="mb-6 text-xs text-zinc-400">5초마다 자동으로 갱신됩니다.</p>
 

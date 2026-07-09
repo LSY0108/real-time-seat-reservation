@@ -515,13 +515,13 @@ POST /api/reservations/confirm  { showId }
 
 ### 5단계 — 내 예약 조회/취소
 
-- [ ] `src/entities/reservation.ts` — Reservation 타입 정의
-- [ ] `src/api/reservation.api.ts` — getMyReservations, cancelReservation 추가
-- [ ] `src/features/reservation/hooks/useMyReservations.ts`
-- [ ] `src/features/reservation/hooks/useReservationCancel.ts`
-- [ ] `src/features/reservation/components/ReservationList.tsx`
-- [ ] `src/features/reservation/components/ReservationItem.tsx`
-- [ ] `src/app/my/reservations/page.tsx`
+- [x] `src/entities/reservation.ts` — Reservation 타입 정의
+- [x] `src/api/reservation.api.ts` — getMyReservationsApi, cancelReservationApi 추가
+- [x] `src/features/reservation/hooks/useMyReservations.ts`
+- [x] `src/features/reservation/hooks/useReservationCancel.ts` — `pendingReservationId`로 항목별 취소 진행 상태 구분
+- [x] `src/features/reservation/components/ReservationList.tsx`
+- [x] `src/features/reservation/components/ReservationItem.tsx`
+- [x] `src/app/my/reservations/page.tsx` — `useRequireAuth` 최초 실사용처
 
 ---
 
