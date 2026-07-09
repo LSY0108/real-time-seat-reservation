@@ -6,6 +6,8 @@
 ## [Unreleased]
 
 ### Added
+- 좌석 선택 페이지(`/shows/[showId]/seats`), 내 예약 페이지(`/my/reservations`)에 홈으로 돌아가는 뒤로 가기 버튼(`components/ui/BackHomeButton`) 추가
+- 프론트엔드 "내 예약 조회/취소" 화면(`/my/reservations`) — `useMyReservations`/`useReservationCancel` 훅, `ReservationList`/`ReservationItem` 컴포넌트. 홈 화면에 진입 링크 추가
 - 프로젝트 전용 verify 하네스(`.claude/skills/verify/SKILL.md`) — backend/frontend 빌드·구동·hold-confirm 흐름·auth 흐름(로그인/refresh rotation/탈취 감지) 검증 레시피
 - GitHub Actions CI 파이프라인(`.github/workflows/ci.yml`) — push/PR마다 backend gradle test + frontend lint/test/build
 - 확정(confirm) 동시 요청 레이스 컨디션 테스트(`confirmAll_concurrentDuplicateRequests_onlyOneSucceeds`)
@@ -17,6 +19,9 @@
 - `backend/CLAUDE.md`를 `@AGENTS.md` 포인터로 전환, 실제 내용은 `backend/AGENTS.md`로 이동 (root/frontend와 패턴 통일)
 - README의 API 목록/Redis 키 구조/토큰 설계 이유를 도메인 문서 링크로 축약 (중복 제거)
 - `frontend/AUTH_FLOW.md`의 포트 오류(3000→3001) 수정
+
+### Fixed
+- 취소된 예약의 좌석을 다시 예약할 수 없던 버그 수정 — `Reservation`의 `(show_id, seat_id)` UNIQUE 제약이 상태(RESERVED/CANCELED)를 구분하지 않아, 취소 이력이 있는 좌석은 이후 누구도 재예약할 수 없었음. DB 생성 컬럼(`active_seat_marker`, status=RESERVED일 때만 값을 가짐) 기반 UNIQUE 제약으로 교체해 동시 confirm 중복 방지는 유지하면서 재예약을 허용하도록 수정
 
 ### Removed
 - `backend/HELP.md` (Spring Initializr 기본 생성 문서, 프로젝트 내용 없음)
