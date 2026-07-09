@@ -6,6 +6,7 @@
 ## [Unreleased]
 
 ### Added
+- 프론트엔드 "내 예약 조회/취소" 화면(`/my/reservations`) — `useMyReservations`/`useReservationCancel` 훅, `ReservationList`/`ReservationItem` 컴포넌트. 홈 화면에 진입 링크 추가
 - 프로젝트 전용 verify 하네스(`.claude/skills/verify/SKILL.md`) — backend/frontend 빌드·구동·hold-confirm 흐름·auth 흐름(로그인/refresh rotation/탈취 감지) 검증 레시피
 - GitHub Actions CI 파이프라인(`.github/workflows/ci.yml`) — push/PR마다 backend gradle test + frontend lint/test/build
 - 확정(confirm) 동시 요청 레이스 컨디션 테스트(`confirmAll_concurrentDuplicateRequests_onlyOneSucceeds`)
