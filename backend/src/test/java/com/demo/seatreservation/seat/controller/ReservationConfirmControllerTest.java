@@ -277,6 +277,53 @@ public class ReservationConfirmControllerTest {
                 .andExpect(jsonPath("$.errorCode").value("ALREADY_RESERVED"));
     }
 
+    /**
+     * 테스트 목적:
+     * 좌석이 과거에 예약되었다가 취소(CANCELED)된 이력이 있어도, 같은 (showId, seatId)로
+     * 다시 confirm하면 정상적으로 예약이 생성되어야 한다. uk_resv_show_seat UNIQUE 제약이
+     * seat_id가 아니라 status=RESERVED일 때만 값을 갖는 생성 컬럼(active_seat_marker)을
+     * 참조하므로, CANCELED 이력 행과는 충돌하지 않아야 한다.
+     */
+    @Test
+    void confirmAll_afterPreviousCancellation_canReserveAgain() throws Exception {
+        User user = saveUser("confirm@test.com");
+        String token = loginAndGetToken("confirm@test.com");
+
+        Seat seat = createSeat(1L, 1);
+        Long seatId = seat.getId();
+        Long showId = 1L;
+
+        // 같은 좌석에 대한 과거 CANCELED 이력
+        reservationRepository.save(
+                Reservation.builder()
+                        .seatId(seatId)
+                        .showId(showId)
+                        .userId(999L)
+                        .status(ReservationStatus.CANCELED)
+                        .build()
+        );
+
+        setupBundle(showId, user.getId(), List.of(seatId));
+
+        mockMvc.perform(post("/api/reservations/confirm")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"showId": %d}
+                                """.formatted(showId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.status").value("RESERVED"));
+
+        // CANCELED 이력 1건 + 새 RESERVED 1건, 총 2건이 공존해야 한다
+        List<Reservation> reservations = reservationRepository.findAll();
+        Assertions.assertEquals(2, reservations.size());
+        long reservedCount = reservations.stream()
+                .filter(r -> r.getStatus() == ReservationStatus.RESERVED)
+                .count();
+        Assertions.assertEquals(1, reservedCount);
+    }
+
     @Test
     void confirmAll_noAuthToken_returns401() throws Exception {
         mockMvc.perform(post("/api/reservations/confirm")
