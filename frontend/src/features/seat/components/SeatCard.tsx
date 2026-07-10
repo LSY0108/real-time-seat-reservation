@@ -5,21 +5,21 @@ import type { Seat, SeatStatus } from '@/entities/seat';
 const statusStyle: Record<SeatStatus, { className: string; disabled: boolean }> = {
   AVAILABLE: {
     className:
-      'border-green-400 bg-green-100 text-green-800 hover:bg-green-200 cursor-pointer',
+      'border-emerald-500/50 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/25 hover:border-emerald-400 cursor-pointer',
     disabled: false,
   },
   HELD: {
-    className: 'border-zinc-200 bg-zinc-100 text-zinc-400 cursor-not-allowed',
+    className: 'border-white/5 bg-white/[0.03] text-zinc-600 cursor-not-allowed',
     disabled: true,
   },
   RESERVED: {
-    className: 'border-zinc-200 bg-zinc-100 text-zinc-400 cursor-not-allowed',
+    className: 'border-white/5 bg-white/[0.03] text-zinc-600 cursor-not-allowed',
     disabled: true,
   },
 };
 
 const selectedClassName =
-  'border-blue-500 bg-blue-500 text-white hover:bg-blue-600 cursor-pointer';
+  'border-stadium-gold bg-stadium-gold text-zinc-900 shadow-[0_0_10px_rgba(246,201,69,0.6)] hover:bg-stadium-gold-strong cursor-pointer';
 
 interface SeatCardProps {
   seat: Seat;
@@ -40,7 +40,7 @@ export function SeatCard({ seat, isSelected, isPending = false, onClick }: SeatC
       type="button"
       disabled={disabled}
       onClick={() => onClick?.(seat)}
-      className={`flex h-9 w-9 items-center justify-center rounded border text-xs font-medium transition-colors disabled:cursor-not-allowed ${className}`}
+      className={`flex h-9 w-9 items-center justify-center rounded-t-lg rounded-b-[3px] border text-xs font-semibold transition-colors disabled:cursor-not-allowed ${className}`}
     >
       {seat.number}
     </button>
