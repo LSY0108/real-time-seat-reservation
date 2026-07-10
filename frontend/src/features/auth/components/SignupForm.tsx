@@ -8,6 +8,7 @@ import type { AxiosError } from 'axios';
 import { useSignup } from '@/features/auth/hooks/useSignup';
 import { signupSchema, type SignupFormValues } from '@/features/auth/schemas/auth.schema';
 import type { ErrorResponse } from '@/types/api.types';
+import { formatPhoneNumber } from '@/shared/utils/phone';
 
 export function SignupForm() {
   const { mutate: signup, isPending } = useSignup();
@@ -36,6 +37,8 @@ export function SignupForm() {
   function clearServerError() {
     if (serverError) setServerError(null);
   }
+
+  const phoneField = register('phone', { onChange: clearServerError });
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
@@ -104,8 +107,14 @@ export function SignupForm() {
             <input
               id="phone"
               type="tel"
+              inputMode="numeric"
+              maxLength={13}
               autoComplete="tel"
-              {...register('phone', { onChange: clearServerError })}
+              {...phoneField}
+              onChange={(e) => {
+                e.target.value = formatPhoneNumber(e.target.value);
+                phoneField.onChange(e);
+              }}
               className="w-full rounded-md border border-white/15 bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-stadium-gold focus:ring-1 focus:ring-stadium-gold"
             />
             {errors.phone && (
