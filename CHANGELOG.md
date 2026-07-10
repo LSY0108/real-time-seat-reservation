@@ -6,6 +6,7 @@
 ## [Unreleased]
 
 ### Added
+- 프론트엔드 로그아웃 UI(`components/layout/Header`) — 홈/좌석 선택/내 예약 화면에 인증 상태에 따라 로그인 링크 또는 로그아웃 버튼 표시. 기존 `useLogout` 훅은 있었으나 호출하는 UI가 없던 문제 수정. 리다이렉트 없이 인증 상태만 확인하는 `hooks/useAuthStatus` 추가
 - 좌석 선택 페이지(`/shows/[showId]/seats`), 내 예약 페이지(`/my/reservations`)에 홈으로 돌아가는 뒤로 가기 버튼(`components/ui/BackHomeButton`) 추가
 - 프론트엔드 "내 예약 조회/취소" 화면(`/my/reservations`) — `useMyReservations`/`useReservationCancel` 훅, `ReservationList`/`ReservationItem` 컴포넌트. 홈 화면에 진입 링크 추가
 - 프로젝트 전용 verify 하네스(`.claude/skills/verify/SKILL.md`) — backend/frontend 빌드·구동·hold-confirm 흐름·auth 흐름(로그인/refresh rotation/탈취 감지) 검증 레시피
@@ -16,6 +17,7 @@
 - 백엔드 로깅/민감정보 마스킹 규칙(`backend/AGENTS.md`)
 
 ### Changed
+- 프론트엔드 전체 UI를 다크 톤의 야구장 예매 사이트 컨셉으로 리디자인 — 홈/좌석 선택/내 예약/로그인/회원가입 화면, 좌석 선택 화면에 구역(zone)별 색상과 필드뷰 다이어그램 추가
 - `backend/CLAUDE.md`를 `@AGENTS.md` 포인터로 전환, 실제 내용은 `backend/AGENTS.md`로 이동 (root/frontend와 패턴 통일)
 - README의 API 목록/Redis 키 구조/토큰 설계 이유를 도메인 문서 링크로 축약 (중복 제거)
 - `frontend/AUTH_FLOW.md`의 포트 오류(3000→3001) 수정
