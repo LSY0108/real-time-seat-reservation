@@ -21,7 +21,7 @@ export default function MyReservationsPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 py-8">
       <BackHomeButton />
-      <h1 className="mb-6 text-xl font-semibold text-zinc-900">내 예약</h1>
+      <h1 className="mb-6 text-xl font-semibold text-foreground">내 예약</h1>
       <ReservationList />
     </main>
   );

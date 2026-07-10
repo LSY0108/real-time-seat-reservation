@@ -40,10 +40,17 @@ export function HoldTimer({ expiresAt, onExpire }: HoldTimerProps) {
 
   return (
     <div
-      className={`mb-4 text-sm font-medium ${isExpiring ? 'text-red-600' : 'text-zinc-600'}`}
+      className="mb-4 flex items-center gap-3 rounded-lg border border-white/10 bg-background-elevated px-4 py-2"
       role="timer"
     >
-      좌석 선점 남은 시간 {formatRemaining(remainingMs)}
+      <span className="text-[11px] uppercase tracking-widest text-zinc-500">선점 남은 시간</span>
+      <span
+        className={`font-mono text-lg font-bold tabular-nums ${
+          isExpiring ? 'animate-pulse text-red-400' : 'text-stadium-gold'
+        }`}
+      >
+        {formatRemaining(remainingMs)}
+      </span>
     </div>
   );
 }

@@ -1,25 +1,29 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #05070d;
+  --background-elevated: #0d1424;
+  --foreground: #e8edf5;
+  --stadium-gold: #f6c945;
+  --stadium-gold-strong: #e0ac1f;
+  --stadium-field: #1f8a4c;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-background-elevated: var(--background-elevated);
   --color-foreground: var(--foreground);
+  --color-stadium-gold: var(--stadium-gold);
+  --color-stadium-gold-strong: var(--stadium-gold-strong);
+  --color-stadium-field: var(--stadium-field);
   --font-sans: var(--font-geist);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(246, 201, 69, 0.08), transparent),
+    var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  min-height: 100%;
 }
