@@ -6,6 +6,7 @@
 ## [Unreleased]
 
 ### Added
+- 회원가입 화면 전화번호 입력에 숫자만 입력되도록 제한하고 `010-1234-5678` 형식으로 자동 하이픈 삽입 (`shared/utils/phone.ts`)
 - 프론트엔드 로그아웃 UI(`components/layout/Header`) — 홈/좌석 선택/내 예약 화면에 인증 상태에 따라 로그인 링크 또는 로그아웃 버튼 표시. 기존 `useLogout` 훅은 있었으나 호출하는 UI가 없던 문제 수정. 리다이렉트 없이 인증 상태만 확인하는 `hooks/useAuthStatus` 추가
 - 좌석 선택 페이지(`/shows/[showId]/seats`), 내 예약 페이지(`/my/reservations`)에 홈으로 돌아가는 뒤로 가기 버튼(`components/ui/BackHomeButton`) 추가
 - 프론트엔드 "내 예약 조회/취소" 화면(`/my/reservations`) — `useMyReservations`/`useReservationCancel` 훅, `ReservationList`/`ReservationItem` 컴포넌트. 홈 화면에 진입 링크 추가
