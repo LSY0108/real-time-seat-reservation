@@ -1,8 +1,13 @@
 import Link from 'next/link';
+import { Header } from '@/components/layout/Header';
 
 export default function Home() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-4">
+    <main className="relative flex min-h-screen flex-col items-center justify-center px-4">
+      <div className="absolute right-4 top-4">
+        <Header />
+      </div>
+
       <span className="mb-4 text-4xl" aria-hidden>
         ⚾
       </span>
