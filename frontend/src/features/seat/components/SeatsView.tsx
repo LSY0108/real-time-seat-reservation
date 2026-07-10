@@ -5,6 +5,7 @@ import { useSeats } from '@/features/seat/hooks/useSeats';
 import { useSeatHold } from '@/features/seat/hooks/useSeatHold';
 import { useReservationConfirm } from '@/features/seat/hooks/useReservationConfirm';
 import { BackHomeButton } from '@/components/ui/BackHomeButton';
+import { Header } from '@/components/layout/Header';
 import { getZoneStyle } from '@/shared/utils/zoneColor';
 import { SeatGrid } from './SeatGrid';
 import { HoldTimer } from './HoldTimer';
@@ -94,7 +95,10 @@ export function SeatsView({ showId }: SeatsViewProps) {
   if (isLoading) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <BackHomeButton />
+        <div className="mb-4 flex items-center justify-between">
+          <BackHomeButton />
+          <Header />
+        </div>
         <div className="flex h-48 items-center justify-center text-sm text-zinc-500">
           좌석 불러오는 중...
         </div>
@@ -105,7 +109,10 @@ export function SeatsView({ showId }: SeatsViewProps) {
   if (isError) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <BackHomeButton />
+        <div className="mb-4 flex items-center justify-between">
+          <BackHomeButton />
+          <Header />
+        </div>
         <div className="flex h-48 items-center justify-center text-sm text-red-400">
           좌석 정보를 불러오지 못했습니다.
         </div>
@@ -116,7 +123,10 @@ export function SeatsView({ showId }: SeatsViewProps) {
   if (!seats?.length) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <BackHomeButton />
+        <div className="mb-4 flex items-center justify-between">
+          <BackHomeButton />
+          <Header />
+        </div>
         <div className="flex h-48 items-center justify-center text-sm text-zinc-500">
           등록된 좌석이 없습니다.
         </div>
@@ -126,7 +136,10 @@ export function SeatsView({ showId }: SeatsViewProps) {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-8 pb-24">
-      <BackHomeButton />
+      <div className="mb-4 flex items-center justify-between">
+        <BackHomeButton />
+        <Header />
+      </div>
       <h1 className="mb-1 text-xl font-semibold text-foreground">좌석 선택</h1>
       <p className="mb-6 text-xs text-zinc-500">5초마다 자동으로 갱신됩니다.</p>
 
