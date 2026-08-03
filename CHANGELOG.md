@@ -18,6 +18,7 @@
 - 백엔드 로깅/민감정보 마스킹 규칙(`backend/AGENTS.md`)
 
 ### Changed
+- `GET /api/seats` 좌석 조회 API를 인증 필수로 전환 (기존 공개 API였음) — 비로그인 조회는 401, 프론트엔드는 기존 axios 401 인터셉터로 자동 리다이렉트
 - 프론트엔드 전체 UI를 다크 톤의 야구장 예매 사이트 컨셉으로 리디자인 — 홈/좌석 선택/내 예약/로그인/회원가입 화면, 좌석 선택 화면에 구역(zone)별 색상과 필드뷰 다이어그램 추가
 - `backend/CLAUDE.md`를 `@AGENTS.md` 포인터로 전환, 실제 내용은 `backend/AGENTS.md`로 이동 (root/frontend와 패턴 통일)
 - README의 API 목록/Redis 키 구조/토큰 설계 이유를 도메인 문서 링크로 축약 (중복 제거)

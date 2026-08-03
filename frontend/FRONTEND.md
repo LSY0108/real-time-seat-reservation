@@ -376,7 +376,7 @@ useMutation({
 | 홈 | `/` | 불필요 | — |
 | 로그인 | `/login` | 불필요 (로그인 시 홈으로) | — |
 | 회원가입 | `/signup` | 불필요 | — |
-| 좌석 선택 | `/shows/[showId]/seats` | 조회: 불필요 / HOLD: 필요 | HOLD 시도 시 /login |
+| 좌석 선택 | `/shows/[showId]/seats` | 조회: 필요 / HOLD: 필요 | 비로그인 시 조회 API가 401 → axios 인터셉터가 refresh 시도 후 실패하면 /login으로 리다이렉트 (별도 `useRequireAuth` 가드 없이 인터셉터에 의존) |
 | 내 예약 | `/my/reservations` | 필요 | /login 리다이렉트 |
 
 ### 인증 보호 구현 방식
