@@ -12,7 +12,7 @@ HOLD는 **예매 세션(showId + userId) 단위**로 묶여서 관리된다 (`re
 |--------|------|------|------|
 | POST | `/api/seats/{seatId}/hold` | 필요 (적용) | HOLD 생성 (예매 세션에 좌석 1개 추가) |
 | DELETE | `/api/seats/{seatId}/hold` | 필요 (적용) | HOLD 취소 (좌석 1개를 세션에서 제거) |
-| GET | `/api/seats` | 불필요 (GET `/api/seats` 공개) | 실시간 좌석 상태 조회 (`?showId=` 쿼리 파라미터) |
+| GET | `/api/seats` | 필요 (적용) | 실시간 좌석 상태 조회 (`?showId=` 쿼리 파라미터) |
 | POST | `/api/reservations/confirm` | 필요 (적용) | 예매 세션 내 HOLD된 좌석 **전체 일괄** 확정 |
 | GET | `/api/me/reservations` | 필요 (적용) | 내 예약 조회 (userId는 JWT Principal에서 추출) |
 | POST | `/api/reservations/{reservationId}/cancel` | 필요 (적용) | 예약 취소 |

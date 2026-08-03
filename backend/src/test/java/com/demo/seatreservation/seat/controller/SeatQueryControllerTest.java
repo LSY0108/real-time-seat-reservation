@@ -2,9 +2,12 @@ package com.demo.seatreservation.seat.controller;
 
 import com.demo.seatreservation.domain.Reservation;
 import com.demo.seatreservation.domain.Seat;
+import com.demo.seatreservation.domain.User;
 import com.demo.seatreservation.domain.enums.ReservationStatus;
+import com.demo.seatreservation.domain.enums.Role;
 import com.demo.seatreservation.repository.ReservationRepository;
 import com.demo.seatreservation.repository.SeatRepository;
+import com.demo.seatreservation.repository.UserRepository;
 import com.demo.seatreservation.seat.redis.HoldKey;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,12 +16,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.concurrent.TimeUnit;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -36,8 +47,19 @@ class SeatQueryControllerTest {
     @Autowired
     StringRedisTemplate redisTemplate;
 
+    @Autowired
+    UserRepository userRepository;
+
+    @Autowired
+    PasswordEncoder passwordEncoder;
+
+    @Autowired
+    ObjectMapper objectMapper;
+
+    private String token;
+
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
 
         // DB 예약 데이터 초기화
         reservationRepository.deleteAll();
@@ -49,6 +71,9 @@ class SeatQueryControllerTest {
 
         // Seat 테이블 초기화
         seatRepository.deleteAll();
+
+        // User 테이블 초기화
+        userRepository.deleteAll();
 
         // 테스트용 좌석 3개 생성
         seatRepository.save(Seat.builder()
@@ -71,6 +96,37 @@ class SeatQueryControllerTest {
                 .row(1)
                 .number(3)
                 .build());
+
+        // 좌석 조회는 인증이 필요하므로 테스트용 유저 발급
+        saveUser("query@test.com");
+        token = loginAndGetToken("query@test.com");
+    }
+
+    private void saveUser(String email) {
+        userRepository.save(
+                User.builder()
+                        .email(email)
+                        .password(passwordEncoder.encode("password1!"))
+                        .name("테스터")
+                        .phone("010-0000-0000")
+                        .role(Role.USER)
+                        .build()
+        );
+    }
+
+    private String loginAndGetToken(String email) throws Exception {
+        MvcResult result = mockMvc.perform(
+                        post("/api/auth/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"email": "%s", "password": "password1!"}
+                                        """.formatted(email))
+                )
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode root = objectMapper.readTree(result.getResponse().getContentAsString());
+        return root.get("data").get("accessToken").asText();
     }
 
 
@@ -87,12 +143,29 @@ class SeatQueryControllerTest {
     void getSeats_allAvailable() throws Exception {
 
         mockMvc.perform(get("/api/seats")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .param("showId", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data[0].status").value("AVAILABLE"))
                 .andExpect(jsonPath("$.data[1].status").value("AVAILABLE"))
                 .andExpect(jsonPath("$.data[2].status").value("AVAILABLE"));
+    }
+
+
+    /**
+     * 테스트 목적:
+     * 인증 토큰 없이 좌석 조회를 시도하면 401을 반환하는지 확인한다.
+     *
+     * 기대 결과:
+     * - HTTP 401 Unauthorized
+     */
+    @Test
+    void getSeats_noAuthToken_returns401() throws Exception {
+
+        mockMvc.perform(get("/api/seats")
+                        .param("showId", "1"))
+                .andExpect(status().isUnauthorized());
     }
 
 
@@ -119,6 +192,7 @@ class SeatQueryControllerTest {
                 .set(key, "100", 300, TimeUnit.SECONDS);
 
         mockMvc.perform(get("/api/seats")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .param("showId", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].status").value("HELD"));
@@ -151,6 +225,7 @@ class SeatQueryControllerTest {
         );
 
         mockMvc.perform(get("/api/seats")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .param("showId", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].status").value("RESERVED"));
@@ -200,6 +275,7 @@ class SeatQueryControllerTest {
         redisTemplate.opsForValue().set(key, "100");
 
         mockMvc.perform(get("/api/seats")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .param("showId", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].status").value("RESERVED"));
